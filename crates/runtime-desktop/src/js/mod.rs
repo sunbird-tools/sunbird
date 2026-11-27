@@ -33,6 +33,7 @@ use crate::{
    },
    double_click,
    emoji,
+   forward,
    js::{
       commands::Registered,
       ui::{
@@ -79,6 +80,8 @@ pub struct Desktop<'js> {
    pub hides:            RefCell<Vec<(u64, String)>>,
    /// `phoenix.ui.collapseChannels` holds by id and plugin.
    pub collapses:        RefCell<Vec<(u64, String)>>,
+   /// `phoenix.ui.disableForwardFollow` holds by id and plugin.
+   pub forward_follows:  RefCell<Vec<(u64, String)>>,
    /// `phoenix.spotify` holds by id, plugin and tweak.
    pub spotify:          RefCell<Vec<(u64, String, Tweak)>>,
    /// `phoenix.ui.addHeaderButton` handlers by id and plugin.
@@ -179,12 +182,11 @@ pub fn unload(ctx: &Ctx<'_>, name: &str) {
       !held
    });
 
-   registry.collapses.borrow_mut().retain(|(_, plugin)| {
-      let held = plugin == name;
-      if held {
-         sidebar::collapse(false);
-      }
-      !held
+   release_holds(&registry.collapses, name, || {
+      sidebar::collapse(false);
+   });
+   release_holds(&registry.forward_follows, name, || {
+      forward::disable(false);
    });
 
    registry.spotify.borrow_mut().retain(|&(_, ref plugin, tweak)| {
@@ -230,4 +232,14 @@ pub fn unload(ctx: &Ctx<'_>, name: &str) {
    commands::unload(&registry, name);
    fonts::unload(name);
    themes::unload(name);
+}
+
+fn release_holds(holds: &RefCell<Vec<(u64, String)>>, name: &str, mut release: impl FnMut()) {
+   holds.borrow_mut().retain(|(_, plugin)| {
+      let held = plugin == name;
+      if held {
+         release();
+      }
+      !held
+   });
 }
