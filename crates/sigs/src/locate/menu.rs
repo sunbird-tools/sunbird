@@ -49,8 +49,34 @@ const HEAD: usize = 40;
 /// `b memcpy`. Every copy must agree.
 pub fn submenu(ix: &Index<'_>) -> Found<SubmenuLayout> {
    let sp = ix.isa.sp();
-   let mut found = ix
-      .heads(HEAD, |head| shape(head, sp, |_| Some(0)).is_some())
+   let candidates = if ix.isa == crate::index::Isa::Aarch64 {
+      // Pre-filter on raw words to avoid decoding 40 instructions of all ~300k functions:
+      // `shape()` requires an `adrp` (for the builder vtable), a non-SP `add #imm` (for
+      // `props` field address), and an 8-byte store off a non-SP base (for `tag` at +0).
+      ix.heads_arm64_words(HEAD, |words| {
+         let (mut has_adrp, mut has_add, mut has_store0) = (false, false, false);
+         for &w in words {
+            if w & 0x9F00_0000 == 0x9000_0000 {
+               has_adrp = true;
+            } else if w & 0x7F80_0000 == 0x1100_0000 && ((w >> 5) & 31) != 31 {
+               has_add = true;
+            } else if ((w & 0xFFFF_FC00 == 0xF900_0000)
+               || (w & 0xFFE0_0000 == 0xF800_0000)
+               || (w & 0xFC40_0000 == 0xA800_0000))
+               && ((w >> 5) & 31) != 31
+            {
+               has_store0 = true;
+            }
+            if has_adrp && has_add && has_store0 {
+               return true;
+            }
+         }
+         false
+      })
+   } else {
+      ix.heads(HEAD, |head| shape(head, sp, |_| Some(0)).is_some())
+   };
+   let mut found = candidates
       .iter()
       .filter_map(|func| {
          shape(&func.head(HEAD), sp, |target| {

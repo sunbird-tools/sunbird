@@ -96,7 +96,7 @@ impl<'img> Index<'img> {
    /// A call target outside every listed function starts one, which ends at
    /// the next listed start.
    fn add_leaves(&mut self) {
-      let mut tables = self.build_tables(&self.functions);
+      let mut tables = self.build_tables(&self.functions, true);
       let mut leaves = tables
          .calls
          .0
@@ -125,16 +125,18 @@ impl<'img> Index<'img> {
             added.push((start, end));
          }
       }
-      let more = self.build_tables(&added);
-      for (into, from) in [
-         (&mut tables.calls, more.calls),
-         (&mut tables.addrs, more.addrs),
-      ] {
-         into.0.extend(from.0);
-         into.0.sort_unstable();
+      if !added.is_empty() {
+         let more = self.build_tables(&added, false);
+         for (into, from) in [
+            (&mut tables.calls, more.calls),
+            (&mut tables.addrs, more.addrs),
+         ] {
+            into.0.extend(from.0);
+            into.0.sort_unstable();
+         }
+         self.functions.extend(added);
+         self.functions.sort_unstable();
       }
-      self.functions.extend(added);
-      self.functions.sort_unstable();
       drop(self.tables.set(tables));
    }
 
@@ -188,10 +190,13 @@ impl<'img> Index<'img> {
    fn tables(&self) -> &Tables {
       self
          .tables
-         .get_or_init(|| self.build_tables(&self.functions))
+         .get_or_init(|| self.build_tables(&self.functions, true))
    }
 
-   fn build_tables(&self, functions: &[(usize, usize)]) -> Tables {
+   fn build_tables(&self, functions: &[(usize, usize)], seed: bool) -> Tables {
+      if self.isa == Isa::Aarch64 {
+         return self.build_tables_aarch64(functions, seed);
+      }
       let pack = |site: usize, target: usize| -> Option<u64> {
          let site = u32::try_from(site.checked_sub(self.base)?).ok()?;
          let target = u32::try_from(target.checked_sub(self.base)?).ok()?;
@@ -224,6 +229,175 @@ impl<'img> Index<'img> {
       Tables {
          calls: Refs(calls),
          addrs: Refs(addrs),
+      }
+   }
+
+   fn build_tables_aarch64(&self, functions: &[(usize, usize)], seed: bool) -> Tables {
+      let max_end = self
+         .image
+         .segments
+         .iter()
+         .map(|seg| seg.addr.saturating_add(seg.bytes.len()))
+         .max()
+         .unwrap_or(self.base);
+      let max_rva = max_end.saturating_sub(self.base);
+      let shift = max_rva.bit_width().saturating_sub(4);
+      let seed_arm64 = seed && u32::try_from(max_rva).is_ok();
+      let parts = across(functions, |part| {
+         let mut calls: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+         let mut addrs: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+         let mut arm64_refs: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+         let mut all_valid = true;
+         for &(start, end) in part {
+            let Some(code) = self.image.read(start, end.saturating_sub(start)) else {
+               all_valid = false;
+               continue;
+            };
+            let exec_seg = seed_arm64
+               .then(|| {
+                  self
+                     .image
+                     .segments
+                     .iter()
+                     .find(|seg| seg.executable && seg.contains(start))
+               })
+               .flatten();
+            let seed_this = exec_seg.is_some_and(|seg| {
+               let aligned = (start - seg.addr).is_multiple_of(4);
+               all_valid &= aligned;
+               aligned
+            });
+            let warm_prefix = if seed_this {
+               self.exec_warm_prefix(start)
+            } else {
+               &[]
+            };
+            aarch64_table_refs(
+               code,
+               warm_prefix,
+               start,
+               end,
+               self.base,
+               max_end,
+               shift,
+               seed_this,
+               &mut calls,
+               &mut addrs,
+               &mut arm64_refs,
+            );
+         }
+         (calls, addrs, arm64_refs, all_valid)
+      });
+      let mut calls_buckets: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+      let mut addrs_buckets: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+      let mut arm64_buckets: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+      let mut can_seed = seed_arm64;
+      for (c, a, r, all_read) in parts {
+         can_seed &= all_read;
+         for b in 0..16 {
+            calls_buckets[b].extend_from_slice(&c[b]);
+            addrs_buckets[b].extend_from_slice(&a[b]);
+            if can_seed {
+               arm64_buckets[b].extend_from_slice(&r[b]);
+            }
+         }
+      }
+      if can_seed {
+         self.scan_aarch64_exec_gaps(functions, max_end, shift, &mut arm64_buckets);
+      }
+      let threads = std::thread::available_parallelism().map_or(1, usize::from);
+      let calls = sort_and_flatten(calls_buckets, threads);
+      let addrs = sort_and_flatten(addrs_buckets, threads);
+      if can_seed {
+         let mut refs = sort_and_flatten(arm64_buckets, threads);
+         refs.dedup();
+         phoenix_hook::arm64::seed_ref_index(self.image, refs);
+      }
+      Tables {
+         calls: Refs(calls),
+         addrs: Refs(addrs),
+      }
+   }
+
+   /// Returns up to `PAIR_REACH` instructions immediately before `start` inside
+   /// the same executable segment so seeded arm64 `adrp` lookback matches
+   /// `arm64::scan_chunk_refs`.
+   fn exec_warm_prefix(&self, start: usize) -> &[u8] {
+      let max_bytes = op::PAIR_REACH * 4;
+      let Some(seg) = self
+         .image
+         .segments
+         .iter()
+         .find(|seg| seg.executable && seg.contains(start))
+      else {
+         return &[];
+      };
+      let offset = start - seg.addr;
+      let warm_start = offset.saturating_sub(max_bytes);
+      // Keep 4-byte instruction alignment relative to `seg.addr`.
+      let aligned_start = warm_start + ((offset - warm_start) % 4);
+      &seg.bytes[aligned_start..offset]
+   }
+
+   /// Scans executable bytes outside `functions` into `arm64_buckets` so the
+   /// seeded `arm64::REF_INDEX` covers the exact same executable segments as
+   /// `arm64::scan_chunk_refs`.
+   fn scan_aarch64_exec_gaps(
+      &self,
+      functions: &[(usize, usize)],
+      max_end: usize,
+      shift: u32,
+      arm64_buckets: &mut [Vec<u64>; 16],
+   ) {
+      let mut dummy_calls: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+      let mut dummy_addrs: [Vec<u64>; 16] = std::array::from_fn(|_| Vec::new());
+      for seg in self.image.segments.iter().filter(|seg| seg.executable) {
+         let seg_start = seg.addr;
+         let seg_end = seg.addr.saturating_add(seg.bytes.len());
+         let mut cursor = seg_start;
+         for &(fn_start, fn_end) in functions {
+            if fn_end <= seg_start {
+               continue;
+            }
+            if fn_start >= seg_end {
+               break;
+            }
+            if fn_start > cursor {
+               let code = &seg.bytes[cursor - seg_start..fn_start - seg_start];
+               let warm_prefix = self.exec_warm_prefix(cursor);
+               aarch64_table_refs(
+                  code,
+                  warm_prefix,
+                  cursor,
+                  fn_start,
+                  self.base,
+                  max_end,
+                  shift,
+                  true,
+                  &mut dummy_calls,
+                  &mut dummy_addrs,
+                  arm64_buckets,
+               );
+            }
+            cursor = cursor.max(fn_end - (fn_end - seg_start) % 4);
+         }
+         if cursor < seg_end {
+            let code = &seg.bytes[cursor - seg_start..];
+            let warm_prefix = self.exec_warm_prefix(cursor);
+            aarch64_table_refs(
+               code,
+               warm_prefix,
+               cursor,
+               seg_end,
+               self.base,
+               max_end,
+               shift,
+               true,
+               &mut dummy_calls,
+               &mut dummy_addrs,
+               arm64_buckets,
+            );
+         }
       }
    }
 
@@ -309,6 +483,39 @@ impl<'img> Index<'img> {
       self.funcs(starts)
    }
 
+   /// Like [`Self::heads`], but inspects up to `max_words` (capped at 64) raw
+   /// `AArch64` instruction words on the stack with zero heap allocations.
+   #[must_use]
+   pub fn heads_arm64_words(
+      &self,
+      max_words: usize,
+      keep: impl Fn(&[u32]) -> bool + Sync,
+   ) -> Funcs<'_> {
+      let count = max_words.min(64);
+      let starts = across(&self.functions, |part| {
+         let mut out = Vec::new();
+         for &(start, end) in part {
+            let bytes = end.saturating_sub(start).min(count * 4);
+            let Some(code) = self.image.read(start, bytes) else {
+               continue;
+            };
+            let chunks = code.as_chunks::<4>().0;
+            let mut words = [0u32; 64];
+            for (dst, &raw) in words.iter_mut().zip(chunks.iter()) {
+               *dst = u32::from_le_bytes(raw);
+            }
+            if keep(&words[..chunks.len()]) {
+               out.push(start);
+            }
+         }
+         out
+      })
+      .into_iter()
+      .flatten()
+      .collect::<Vec<usize>>();
+      self.funcs(starts)
+   }
+
    /// Where `needle` sits in any segment.
    #[must_use]
    pub fn text(&self, needle: &[u8]) -> Vec<usize> {
@@ -340,12 +547,7 @@ impl<'img> Index<'img> {
    pub fn strs(&self) -> &[StrSlot] {
       self.strs.get_or_init(|| {
          let width = self.image.pointer_width;
-         // A 64-bit image read on a 32-bit host has no pointers it could use.
-         let word = |bytes: &[u8]| -> usize {
-            let mut raw = [0u8; 8];
-            raw[..width].copy_from_slice(&bytes[..width]);
-            usize::try_from(u64::from_le_bytes(raw)).unwrap_or(usize::MAX)
-         };
+         let threads = std::thread::available_parallelism().map_or(1, usize::from);
          let mut found = Vec::new();
          for segment in self
             .image
@@ -354,22 +556,70 @@ impl<'img> Index<'img> {
             .filter(|segment| !segment.executable)
          {
             let words = segment.bytes.len() / width;
-            for index in 0..words.saturating_sub(1) {
-               let at = index * width;
-               let len = word(&segment.bytes[at + width..]);
-               if !(1..=MAX_STR).contains(&len) {
-                  continue;
+            let count = words.saturating_sub(1);
+            if count == 0 {
+               continue;
+            }
+            let scan_range = |from: usize, to: usize| {
+               let mut part = Vec::new();
+               for index in from..to {
+                  let at = index * width;
+                  let mut raw_len = [0u8; 8];
+                  raw_len[..width].copy_from_slice(&segment.bytes[at + width..at + 2 * width]);
+                  let len = usize::try_from(u64::from_le_bytes(raw_len)).unwrap_or(usize::MAX);
+                  if !(1..=MAX_STR).contains(&len) {
+                     continue;
+                  }
+                  let mut raw_ptr = [0u8; 8];
+                  raw_ptr[..width].copy_from_slice(&segment.bytes[at..at + width]);
+                  let ptr = usize::try_from(u64::from_le_bytes(raw_ptr)).unwrap_or(usize::MAX);
+                  if let Some(bytes) = self.image.read(ptr, len)
+                     && std::str::from_utf8(bytes).is_ok()
+                  {
+                     part.push(StrSlot {
+                        slot: segment.addr + at,
+                        ptr,
+                        len,
+                     });
+                  }
                }
-               let ptr = word(&segment.bytes[at..]);
-               if let Some(bytes) = self.image.read(ptr, len)
-                  && std::str::from_utf8(bytes).is_ok()
-               {
-                  found.push(StrSlot {
-                     slot: segment.addr + at,
-                     ptr,
-                     len,
-                  });
+               part
+            };
+            if threads > 1 && count >= 65_536 {
+               let chunk = count.div_ceil(threads).max(16_384);
+               let parts: Vec<Vec<StrSlot>> = std::thread::scope(|scope| {
+                  #[expect(
+                     clippy::needless_collect,
+                     reason = "spawn every chunk worker before joining"
+                  )]
+                  let handles: Vec<_> = (0..count)
+                     .step_by(chunk)
+                     .map(|from| {
+                        let to = (from + chunk).min(count);
+                        let spawned = std::thread::Builder::new()
+                           .spawn_scoped(scope, move || scan_range(from, to));
+                        (from, to, spawned)
+                     })
+                     .collect();
+                  handles
+                     .into_iter()
+                     .map(|(from, to, spawned)| {
+                        spawned.map_or_else(
+                           |_| scan_range(from, to),
+                           |handle| {
+                              handle
+                                 .join()
+                                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                           },
+                        )
+                     })
+                     .collect()
+               });
+               for part in parts {
+                  found.extend(part);
                }
+            } else {
+               found.extend(scan_range(0, count));
             }
          }
          found.sort_unstable_by_key(|slot| (slot.ptr, slot.slot));
@@ -493,6 +743,164 @@ impl<'img> Index<'img> {
          }
       }
       self.funcs(sites)
+   }
+}
+
+/// Sorts 16 range-partitioned `u64` buckets (in parallel when `threads > 1`)
+/// and flattens them into one globally sorted `Vec<u64>`.
+fn sort_and_flatten(mut buckets: [Vec<u64>; 16], threads: usize) -> Vec<u64> {
+   if threads <= 1 {
+      for bucket in &mut buckets {
+         bucket.sort_unstable();
+      }
+   } else {
+      std::thread::scope(|scope| {
+         let mut handles = Vec::new();
+         for bucket in &mut buckets {
+            if bucket.len() > 1 {
+               let ptr = bucket.as_mut_ptr() as usize;
+               let len = bucket.len();
+               match std::thread::Builder::new().spawn_scoped(scope, move || {
+                  // SAFETY: each bucket's buffer is disjoint and lives for the scope.
+                  unsafe { std::slice::from_raw_parts_mut(ptr as *mut u64, len) }.sort_unstable();
+               }) {
+                  Ok(handle) => handles.push(handle),
+                  Err(_) => bucket.sort_unstable(),
+               }
+            }
+         }
+         for handle in handles {
+            if let Err(panic) = handle.join() {
+               std::panic::resume_unwind(panic);
+            }
+         }
+      });
+   }
+   let total: usize = buckets.iter().map(Vec::len).sum();
+   let mut out = Vec::with_capacity(total);
+   for bucket in buckets {
+      out.extend_from_slice(&bucket);
+   }
+   out
+}
+
+/// Zero-allocation `AArch64` call and address-load extractor for [`Index::build_tables`].
+/// Matches [`op::decode`] for `Op::Call`, out-of-function `Op::Jump`, `Op::Addr`
+/// (`adrp`, `adrp+add`), and `Op::Global` (`adrp+ldr`/`adrp+str`), and also populates
+/// `arm64_refs` (`adrp+add`, `adrp+ldr/str`, `bl`, `b`) so `phoenix_hook::arm64::code_refs`
+/// never has to scan `__text` a second time.
+#[expect(
+   clippy::too_many_arguments,
+   reason = "hot inner loop avoiding struct overhead"
+)]
+fn aarch64_table_refs(
+   code: &[u8],
+   warm_prefix: &[u8],
+   start: usize,
+   end: usize,
+   base: usize,
+   max_end: usize,
+   shift: u32,
+   seed_arm64: bool,
+   calls: &mut [Vec<u64>; 16],
+   addrs: &mut [Vec<u64>; 16],
+   arm64_refs: &mut [Vec<u64>; 16],
+) {
+   const fn sign_extend(value: u32, bits: u32) -> isize {
+      let shift = 32 - bits;
+      (((value << shift).cast_signed()) >> shift) as isize
+   }
+   const fn rel(pc: usize, imm: u32, bits: u32) -> usize {
+      pc.wrapping_add_signed(sign_extend(imm, bits) * 4)
+   }
+   let push = |buckets: &mut [Vec<u64>; 16], site: usize, target: usize| {
+      if let (Some(s), Some(t)) = (site.checked_sub(base), target.checked_sub(base))
+         && let (Ok(s32), Ok(t32)) = (u32::try_from(s), u32::try_from(t))
+      {
+         let b = (t >> shift).min(15);
+         buckets[b].push((u64::from(t32) << 32) | u64::from(s32));
+      }
+   };
+   let warm_words = warm_prefix.as_chunks::<4>().0;
+   let warm_len = warm_words.len();
+   let mut pages = [(usize::MAX, 0usize); 32];
+   let mut arm64_pages = [(usize::MAX, 0usize); 32];
+   if seed_arm64 && warm_len > 0 {
+      let warm_start = start - warm_len * 4;
+      for (idx, &raw) in warm_words.iter().enumerate() {
+         let word = u32::from_le_bytes(raw);
+         if word & 0x9F00_0000 == 0x9000_0000 {
+            let rd = (word & 0x1F) as usize;
+            let immlo = (word >> 29) & 3;
+            let immhi = (word >> 5) & 0x7_FFFF;
+            let imm = sign_extend((immhi << 2) | immlo, 21) << 12;
+            let pc = warm_start + idx * 4;
+            arm64_pages[rd] = (idx, (pc & !0xFFF).wrapping_add_signed(imm));
+         }
+      }
+   }
+   for (index, &raw) in code.as_chunks::<4>().0.iter().enumerate() {
+      let pc = start + index * 4;
+      let arm64_idx = warm_len + index;
+      let word = u32::from_le_bytes(raw);
+      if word & 0x9F00_0000 == 0x9000_0000 {
+         let rd = (word & 0x1F) as usize;
+         let immlo = (word >> 29) & 3;
+         let immhi = (word >> 5) & 0x7_FFFF;
+         let imm = sign_extend((immhi << 2) | immlo, 21) << 12;
+         let page = (pc & !0xFFF).wrapping_add_signed(imm);
+         pages[rd] = (index, page);
+         arm64_pages[rd] = (arm64_idx, page);
+         push(addrs, pc, page);
+      } else if word & 0x7F80_0000 == 0x1100_0000 {
+         let rn = ((word >> 5) & 0x1F) as usize;
+         let shift_bit = (word >> 22) & 1;
+         let imm = (((word >> 10) & 0xFFF) as usize) << (12 * shift_bit);
+         let (set, page) = pages[rn];
+         if set != usize::MAX && index - set <= op::PAIR_REACH {
+            push(addrs, pc, page.wrapping_add(imm));
+         }
+         if seed_arm64 {
+            let (a_set, a_page) = arm64_pages[rn];
+            if a_set != usize::MAX && arm64_idx - a_set <= op::PAIR_REACH {
+               let target = a_page.wrapping_add(imm);
+               if target >= base && target < max_end {
+                  push(arm64_refs, pc, target);
+               }
+            }
+         }
+      } else if word & 0x3F00_0000 == 0x3900_0000 && ((word >> 22) & 3) <= 1 {
+         let rn = ((word >> 5) & 0x1F) as usize;
+         let size = 1usize << (word >> 30);
+         let offset = ((word >> 10) & 0xFFF) as usize * size;
+         let (set, page) = pages[rn];
+         if set != usize::MAX && index - set <= op::PAIR_REACH {
+            push(addrs, pc, page.wrapping_add(offset));
+         }
+         if seed_arm64 {
+            let (a_set, a_page) = arm64_pages[rn];
+            if a_set != usize::MAX && arm64_idx - a_set <= op::PAIR_REACH {
+               let target = a_page.wrapping_add(offset);
+               if target >= base && target < max_end {
+                  push(arm64_refs, pc, target);
+               }
+            }
+         }
+      } else if word & 0xFC00_0000 == 0x9400_0000 {
+         let target = rel(pc, word & 0x03FF_FFFF, 26);
+         push(calls, pc, target);
+         if seed_arm64 && target >= base && target < max_end {
+            push(arm64_refs, pc, target);
+         }
+      } else if word & 0xFC00_0000 == 0x1400_0000 {
+         let target = rel(pc, word & 0x03FF_FFFF, 26);
+         if !(start..end).contains(&target) {
+            push(calls, pc, target);
+         }
+         if seed_arm64 && target >= base && target < max_end {
+            push(arm64_refs, pc, target);
+         }
+      }
    }
 }
 
