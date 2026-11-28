@@ -529,22 +529,25 @@ fn check(
       },
       // Desktop Phoenix built for arm64, on macOS or Linux.
       Machine::Aarch64 if !image.find_bytes(DESKTOP_GATE).is_empty() => {
-         report(
-            "malloc re-exec",
-            image
-               .find_bytes(phoenix_sigs::MACOS_REEXEC.as_bytes())
-               .first()
-               .map(|&found| at(found))
-               .ok_or_else(|| "the loader waits for a re-exec this build never does".to_owned()),
-         );
-         report(
-            "malloc settings",
-            image
-               .find_bytes(phoenix_sigs::MACOS_MALLOC.as_bytes())
-               .first()
-               .map(|&found| at(found))
-               .ok_or_else(|| "the loader can't tell a launch that never re-execs".to_owned()),
-         );
+         // macOS re-execs itself with its malloc settings; Linux doesn't.
+         if macho {
+            report(
+               "malloc re-exec",
+               image
+                  .find_bytes(phoenix_sigs::MACOS_REEXEC.as_bytes())
+                  .first()
+                  .map(|&found| at(found))
+                  .ok_or_else(|| "the loader waits for a re-exec this build never does".to_owned()),
+            );
+            report(
+               "malloc settings",
+               image
+                  .find_bytes(phoenix_sigs::MACOS_MALLOC.as_bytes())
+                  .first()
+                  .map(|&found| at(found))
+                  .ok_or_else(|| "the loader can't tell a launch that never re-execs".to_owned()),
+            );
+         }
          let http = phoenix_sigs::macos::http_transport(image);
          report(
             "http transport",
@@ -707,20 +710,27 @@ fn check(
             "message json",
             phoenix_sigs::macos::message_writer(image).map(|found| format!("{found:x?}")),
          );
-         report(
-            "access enforced",
-            phoenix_sigs::macos::access_read(image)
-               .and_then(|read| phoenix_sigs::macos::access_enforced(image, read))
-               .map(at),
-         );
-         report(
-            "pages under frame",
-            phoenix_sigs::macos::pages_under_frame(image).map(at),
-         );
-         report(
-            "relaunch script",
-            phoenix_sigs::macos::relaunch_script(image).map(at),
-         );
+         if macho {
+            report(
+               "access enforced",
+               phoenix_sigs::macos::access_read(image)
+                  .and_then(|read| phoenix_sigs::macos::access_enforced(image, read))
+                  .map(at),
+            );
+            report(
+               "pages under frame",
+               phoenix_sigs::macos::pages_under_frame(image).map(at),
+            );
+            report(
+               "relaunch script",
+               phoenix_sigs::macos::relaunch_script(image).map(at),
+            );
+         } else {
+            report(
+               "access enforced",
+               phoenix_sigs::macos::elf_access_enforced(image).map(at),
+            );
+         }
       },
       Machine::Aarch64 if macho => {
          report(

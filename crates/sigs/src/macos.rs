@@ -1642,6 +1642,48 @@ pub fn access_enforced(image: &Image<'_>, read: usize) -> Found<usize> {
    }
 }
 
+/// `client_access::enforced` on Linux arm64, where it is not called from the
+/// access read: `ldr x8, [x0]; bl state; ldrb w8, [x0, #flag]; mov w9, #1;
+/// bic w0, w9, w8` in a frame, with `add x0, x8, #state; b read` outlined
+/// into the stub `state` (reached through a veneer).
+///
+/// Read on build 2208. The call and the flag offset are wildcards.
+const ELF_ENFORCED: Pattern = Pattern::new(
+   "FD 7B BF A9 FD 03 00 91 08 00 40 F9 ?? ?? ?? ?? 08 ?? ?? 39 29 00 80 52 20 01 28 0A FD 7B C1 \
+    A8 C0 03 5F D6",
+);
+
+/// Offset of `bl state` in [`ELF_ENFORCED`].
+const ELF_ENFORCED_CALL: usize = 12;
+
+/// `client_access::enforced` on Linux arm64 (see [`ELF_ENFORCED`]).
+pub fn elf_access_enforced(image: &Image<'_>) -> Found<usize> {
+   let found = image
+      .scan(ELF_ENFORCED)
+      .into_iter()
+      .filter(|&at| {
+         let call = at + ELF_ENFORCED_CALL;
+         let Some(Insn::Bl { target }) =
+            image.read(call, 4).and_then(|code| arm64::decode_all(code, call).next()).map(|(_, i)| i)
+         else {
+            return false;
+         };
+         // `add x0, x8, #state; b read`, through one veneer at most.
+         let insns = |at: usize| {
+            image
+               .read(at, 8)
+               .map(|code| arm64::decode_all(code, at).map(|(_, i)| i).collect::<Vec<_>>())
+               .unwrap_or_default()
+         };
+         let is_state =
+            |at: usize| matches!(insns(at)[..], [Insn::AddImm { rd: 0, rn: 8, .. }, Insn::B { .. }]);
+         is_state(target)
+            || matches!(insns(target).first(), Some(&Insn::B { target: tail }) if is_state(tail))
+      })
+      .collect::<Vec<_>>();
+   one("client_access::enforced", &found)
+}
+
 /// `mov w0, #0; ret`: returns `false` from `pages_under_frame`.
 pub const PAGES_OVER_FRAME: [u8; 8] = [0x00, 0x00, 0x80, 0x52, 0xC0, 0x03, 0x5F, 0xD6];
 
