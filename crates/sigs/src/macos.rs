@@ -2602,7 +2602,11 @@ pub struct MemberRow {
 pub fn member_row(image: &Image<'_>) -> Found<MemberRow> {
    let anchors = image.find_bytes(b"member-{}-{}");
    let func = one("member row", &loaders(image, &anchors))?;
-   let (_, code) = arm64::function(image, func).ok_or("member row unreadable")?;
+   let (_, mut code) = arm64::function(image, func).ok_or("member row unreadable")?;
+   // ELF builds move the env setup into outlined stubs.
+   if image.function_starts.is_none() {
+      code = flattened_at(image, func);
+   }
 
    let template = refs_to(image, &anchors)
       .into_iter()
@@ -2644,7 +2648,14 @@ pub fn member_row(image: &Image<'_>) -> Found<MemberRow> {
                rn: 31,
                imm: env_base,
             } => {
-               let Some(Insn::Bl { target: closure }) = window.get(i + 1).map(|&(_, x)| x) else {
+               // An outlined stub's moves can sit before the call on ELF builds.
+               let Some(closure) = window[i + 1..].iter().take(4).find_map(|&(_, next)| {
+                  match next {
+                     Insn::Bl { target } => Some(Some(target)),
+                     Insn::MovReg { rd: 1, .. } | Insn::AddImm { rd: 1, .. } => Some(None),
+                     _ => None,
+                  }
+               }).flatten() else {
                   continue;
                };
                for &field in &stored_at {
@@ -2694,24 +2705,38 @@ fn closure_reads_env_user(image: &Image<'_>, closure: usize, env_off: usize) -> 
    )) else {
       return false;
    };
-   flat.windows(2).any(|pair| {
-      matches!(
-         (pair[0].1, pair[1].1),
-         (
-            Insn::Load {
-               rt: ptr_reg,
-               rn,
-               offset,
-               size: 8,
-            },
+   // The deref can come a few instructions after the load on ELF builds.
+   flat.iter().enumerate().any(|(at, &(_, insn))| {
+      let Insn::Load {
+         rt: ptr_reg,
+         rn,
+         offset,
+         size: 8,
+      } = insn
+      else {
+         return false;
+      };
+      if rn != env_reg || offset != env_off {
+         return false;
+      }
+      for &(_, next) in flat[at + 1..].iter().take(4) {
+         match next {
             Insn::Load {
                rn: deref,
                offset: 0,
                size: 8,
                ..
+            } if deref == ptr_reg => return true,
+            Insn::Load { rt, .. } | Insn::MovReg { rd: rt, .. } | Insn::AddImm { rd: rt, .. }
+            | Insn::MovZ { rd: rt, .. }
+               if rt == ptr_reg =>
+            {
+               return false;
             },
-         ) if rn == env_reg && offset == env_off && deref == ptr_reg
-      )
+            _ => {},
+         }
+      }
+      false
    })
 }
 
