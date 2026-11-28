@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// The command runner and what it takes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Commands {
    /// `runner(client: &Client, json: *const u8, len) -> Pin<Box<dyn Future<
    /// Output = Vec<u8>>>>`, Rust ABI, the box and its vtable in two words.

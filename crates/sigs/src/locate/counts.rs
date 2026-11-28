@@ -24,7 +24,7 @@ const PENDING_TAB: &[u8] = b"FRIENDS_SECTION_PENDING";
 const BADGE_REACH: usize = 0x40;
 
 /// What draws the DM list's pending counts.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PendingCounts {
    /// The DM list's row badge, `fn(out, id: &str, count: u32, _, _) -> out`,
    /// which draws [`FRIENDS_BADGE`] and [`MESSAGE_REQUESTS_BADGE`] only. Linux

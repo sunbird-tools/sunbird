@@ -4,12 +4,9 @@ use std::sync::{
    PoisonError,
 };
 
-use phoenix_sigs::{
-   index::Index,
-   locate::{
-      CodePatch,
-      spotify,
-   },
+use phoenix_sigs::locate::{
+   CodePatch,
+   spotify,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,10 +27,16 @@ impl Tweak {
 static PATCHES: [OnceLock<CodePatch>; 2] = [OnceLock::new(), OnceLock::new()];
 static HOLDERS_PER_TWEAK: Mutex<[usize; 2]> = Mutex::new([0; 2]);
 
-pub fn install(ix: &Index<'_>) {
+pub fn install(ix: &crate::located::LazyIndex<'_>) {
    let found = [
-      (Tweak::NoAutoPause, spotify::auto_pause(ix)),
-      (Tweak::IdleActivity, spotify::idle_activity(ix)),
+      (
+         Tweak::NoAutoPause,
+         crate::located::get("spotify::auto_pause", || spotify::auto_pause(ix)),
+      ),
+      (
+         Tweak::IdleActivity,
+         crate::located::get("spotify::idle_activity", || spotify::idle_activity(ix)),
+      ),
    ];
    for (tweak, patch) in found {
       match patch {

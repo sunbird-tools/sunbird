@@ -22,7 +22,7 @@ const FIELD: Range<isize> = 0x100..0x2000;
 const ARG_REACH: usize = 32;
 
 /// `MessageRow::render`, and both paths from its row to the message id.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MessageRow {
    pub func:       usize,
    /// `row + id` holds the row's own copy of the id.
@@ -155,7 +155,7 @@ fn rc_deref(ix: &Index<'_>, steps: &[Step]) -> Option<(usize, usize)> {
 
 /// `build_message_body(&MessageViewData, &mut config, ..)`, and where the
 /// message keeps its id and the config its text colors.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MessageBody {
    pub func:       usize,
    pub message_id: usize,
@@ -163,7 +163,7 @@ pub struct MessageBody {
 }
 
 /// Where the body builder reads its text colors from the config.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BodyColors {
    /// `&config.row_colors`, a block of `u32` colors.
    Block(usize),

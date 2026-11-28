@@ -38,12 +38,9 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::mana_theme::{
-      self,
-      ManaThemeLayout,
-   },
+use phoenix_sigs::locate::mana_theme::{
+   self,
+   ManaThemeLayout,
 };
 use phoenix_themes::{
    Color,
@@ -341,8 +338,8 @@ const fn layout_within_bounds(size: usize, colors_size: usize, layout: ManaTheme
 
 /// Locates, self-tests, and hooks `App::set_global::<ManaTheme>` during
 /// `prepare()`.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   let found = match mana_theme::mana_theme(ix) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let found = match crate::located::get("mana_theme::mana_theme", || mana_theme::mana_theme(ix)) {
       Ok(found) => found,
       Err(err) => {
          log::warn!("mana theme: {err}, semantic themes disabled");

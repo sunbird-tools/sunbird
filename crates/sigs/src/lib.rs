@@ -25,6 +25,10 @@ pub mod registry;
 /// What a locator found, or why this build does not match it.
 pub type Found<T> = Result<T, String>;
 
+/// A hash of the locators' and decoders' sources, so what a locator found on
+/// a build is only reused by the code that found it.
+pub const SOURCE: &str = env!("PHOENIX_SIGS_SOURCE");
+
 /// The only match, or how many there were.
 fn one<T: Copy>(what: &str, found: &[T]) -> Found<T> {
    match found {
@@ -35,7 +39,9 @@ fn one<T: Copy>(what: &str, found: &[T]) -> Found<T> {
 
 /// `flag_override: Option<_>` in the store state, as the byte offsets of its
 /// tag and value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+   Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct StaffField {
    pub tag:   usize,
    pub value: usize,

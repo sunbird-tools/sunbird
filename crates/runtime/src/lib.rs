@@ -555,7 +555,14 @@ pub fn target() -> Result<Image<'static>, Error> {
 
 /// Points the gateway registry's handlers at phoenix.
 pub fn hook(image: &Image<'static>) -> Result<&'static GatewayRegistry, Error> {
-   let walked = GatewayRegistry::locate(image)?;
+   hook_walked(image, GatewayRegistry::locate(image)?)
+}
+
+/// [`hook`] with a registry already walked on this build.
+pub fn hook_walked(
+   image: &Image<'static>,
+   walked: GatewayRegistry,
+) -> Result<&'static GatewayRegistry, Error> {
    log::info!("gateway registry: {} events", walked.iter().count());
    gateway::swap(image, walked)
 }

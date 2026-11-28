@@ -8,12 +8,9 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::surfaces::{
-      Menu,
-      menus,
-   },
+use phoenix_sigs::locate::surfaces::{
+   Menu,
+   menus,
 };
 
 use crate::context_menu::{
@@ -31,8 +28,8 @@ static ACTIONS: RwLock<Vec<(Menu, ActionMeta)>> = RwLock::new(Vec::new());
 static ITEM_DROP: OnceLock<DropMenuItem> = OnceLock::new();
 static EDITS: RwLock<Vec<(u64, Menu, Vec<MenuEdit>)>> = RwLock::new(Vec::new());
 
-pub fn install(image: &Image<'static>, ix: &Index<'_>, item_size: usize) {
-   let found = match menus(ix, item_size) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>, item_size: usize) {
+   let found = match crate::located::get("surfaces::menus", || menus(ix, item_size)) {
       Ok(found) => found,
       Err(err) => {
          log::warn!("plugin context menus: {err}");

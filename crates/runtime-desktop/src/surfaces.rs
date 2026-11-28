@@ -10,14 +10,11 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::surfaces::{
-      Surface,
-      button_id_field,
-      composer_buttons,
-      div_ids,
-   },
+use phoenix_sigs::locate::surfaces::{
+   Surface,
+   button_id_field,
+   composer_buttons,
+   div_ids,
 };
 
 use crate::gpui::{
@@ -96,11 +93,13 @@ pub fn div_id_hooked() -> bool {
    ORIGINAL.get().is_some()
 }
 
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
    let (Some(address), Some(layout)) = (gpui::button_new_addr(), gpui::layout()) else {
       return;
    };
-   let field = match button_id_field(ix, address, layout.button.size) {
+   let field = match crate::located::get("surfaces::button_id_field", || {
+      button_id_field(ix, address, layout.button.size)
+   }) {
       Ok(field) => field,
       Err(err) => {
          log::warn!("plugin ui button id: {err}");
@@ -111,7 +110,9 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
    let Some(&target) = DIV_ID.get().filter(|_| gpui::supports_push_any()) else {
       return;
    };
-   match composer_buttons(ix, target, layout.div.size) {
+   match crate::located::get("surfaces::composer_buttons", || {
+      composer_buttons(ix, target, layout.div.size)
+   }) {
       Ok((site, _)) => {
          // SAFETY: the composer locator verifies the native optional Div child
          // call. Startup installs the detour before it can be called.
@@ -126,16 +127,20 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
       },
       Err(err) => log::warn!("plugin ui composer: {err}"),
    }
-   let slots = Surface::DIVS
-      .into_iter()
-      .flat_map(|surface| {
-         div_ids(ix, target, surface)
-            .inspect_err(|err| log::warn!("plugin ui {}: {err}", surface.name()))
-            .unwrap_or_default()
-            .into_iter()
-            .map(move |addr| (surface, addr, surface.native_id().map_or(0, str::len)))
-      })
-      .collect::<Vec<_>>();
+   let Ok(slots) = crate::located::get("surfaces::div_ids", || {
+      Ok(Surface::DIVS
+         .into_iter()
+         .flat_map(|surface| {
+            div_ids(ix, target, surface)
+               .inspect_err(|err| log::warn!("plugin ui {}: {err}", surface.name()))
+               .unwrap_or_default()
+               .into_iter()
+               .map(move |addr| (surface, addr, surface.native_id().map_or(0, str::len)))
+         })
+         .collect::<Vec<_>>())
+   }) else {
+      return;
+   };
    if slots.is_empty() {
       return;
    }

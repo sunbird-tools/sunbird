@@ -20,15 +20,12 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::{
-      message::{
-         self,
-         BodyColors,
-      },
-      settings,
+use phoenix_sigs::locate::{
+   message::{
+      self,
+      BodyColors,
    },
+   settings,
 };
 
 use crate::{
@@ -246,7 +243,7 @@ pub fn current_rendering_message_id() -> u64 {
 }
 
 /// Locates and hooks Discord's GPUI `MessageRow::render` from `DllMain`.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
    if !gpui::supports_accessories() {
       log::warn!("desktop accessories: GPUI text/push primitives unavailable, skipping");
       return;
@@ -258,13 +255,14 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
       return;
    }
 
-   let (render_row, offset) = match message::message_row(ix) {
-      Ok(row) => (row.func, row.id),
-      Err(err) => {
-         log::warn!("desktop accessories: {err}, skipping");
-         return;
-      },
-   };
+   let (render_row, offset) =
+      match crate::located::get("message::message_row", || message::message_row(ix)) {
+         Ok(row) => (row.func, row.id),
+         Err(err) => {
+            log::warn!("desktop accessories: {err}, skipping");
+            return;
+         },
+      };
    MSG_ID_OFFSET.store(offset, Ordering::Release);
 
    // SAFETY: runs from `prepare` before Discord threads execute;
@@ -291,8 +289,14 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
 /// Hooks Discord's inner message body builder (`build_message_body`, called
 /// once per row from `MessageRow::render`) so message tints also recolor the
 /// rendered message body text natively via `config.row_colors` (`0xRRGGBBAA`).
-fn install_body_tint(image: &Image<'static>, ix: &Index<'_>, render_row: usize) {
-   let body = match message::message_body(ix, render_row) {
+fn install_body_tint(
+   image: &Image<'static>,
+   ix: &crate::located::LazyIndex<'_>,
+   render_row: usize,
+) {
+   let body = match crate::located::get("message::message_body", || {
+      message::message_body(ix, render_row)
+   }) {
       Ok(body) => body,
       Err(err) => {
          log::warn!("desktop accessories: {err}, skipping body tint");
@@ -458,17 +462,18 @@ fn decorate(sret: *mut RawAnyElement, message_id: u64) {
 /// Locates and hooks Desktop Phoenix's same-client optimistic message delete
 /// (`Store::delete_message`), so deleting a message from this client respects
 /// `MESSAGE_DELETE` `before` hooks (such as `message-logger`).
-pub fn install_optimistic_delete(image: &Image<'static>, ix: &Index<'_>) {
+pub fn install_optimistic_delete(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
    let Some(del_fn) = phoenix_runtime::gateway::original_handler("MESSAGE_DELETE") else {
       log::warn!(
          "desktop accessories: MESSAGE_DELETE handler not found, skipping optimistic delete hook"
       );
       return;
    };
-   let found = ix
-      .func(del_fn)
-      .and_then(|handler| settings::optimistic_delete(ix, handler))
-      .map(|found| {
+   let found = crate::located::get("settings::optimistic_delete", || {
+      ix.func(del_fn)
+         .and_then(|handler| settings::optimistic_delete(ix, handler))
+   })
+   .map(|found| {
          if crate::X86_CODE {
             vec![found.sibling]
          } else {
@@ -611,8 +616,8 @@ mod arm64 {
       RENDERING.with(std::cell::Cell::get)
    }
 
-   pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-      let row = match message::message_row(ix) {
+   pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+      let row = match crate::located::get("message::message_row", || message::message_row(ix)) {
          Ok(row) => row,
          Err(err) => {
             log::warn!("desktop accessories: {err}, skipping");
@@ -647,8 +652,14 @@ mod arm64 {
    /// text color's offset in the config.
    static BODY: OnceLock<(BodyFn, usize, Vec<usize>)> = OnceLock::new();
 
-   fn install_body_tint(image: &Image<'static>, ix: &Index<'_>, render_row: usize) {
-      let body = match message::message_body(ix, render_row) {
+   fn install_body_tint(
+      image: &Image<'static>,
+      ix: &crate::located::LazyIndex<'_>,
+      render_row: usize,
+   ) {
+      let body = match crate::located::get("message::message_body", || {
+         message::message_body(ix, render_row)
+      }) {
          Ok(body) => body,
          Err(err) => {
             log::warn!("desktop accessories: {err}, skipping body tint");

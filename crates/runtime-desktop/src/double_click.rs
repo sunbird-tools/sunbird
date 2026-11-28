@@ -156,12 +156,9 @@ pub mod pane {
       },
    };
 
-   use phoenix_sigs::{
-      index::Index,
-      locate::chat::{
-         self,
-         PaneCommands,
-      },
+   use phoenix_sigs::locate::chat::{
+      self,
+      PaneCommands,
    };
 
    /// `WeakEntity<ChatPaneView>`: its id, ref counts and type.
@@ -180,8 +177,8 @@ pub mod pane {
    static PANES: LazyLock<Mutex<HashMap<u64, Handle>>> =
       LazyLock::new(|| Mutex::new(HashMap::new()));
 
-   pub fn install(ix: &Index<'_>) {
-      match chat::pane_commands(ix) {
+   pub fn install(ix: &crate::located::LazyIndex<'_>) {
+      match crate::located::get("chat::pane_commands", || chat::pane_commands(ix)) {
          Ok(found) => {
             let _ = COMMANDS.set(found);
          },

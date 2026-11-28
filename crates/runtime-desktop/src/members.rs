@@ -198,11 +198,11 @@ pub fn install(image: &Image<'static>) {
       arm64::install(image);
       return;
    }
-   match desktop::member_row(image) {
+   match crate::located::get("desktop::member_row", || desktop::member_row(image)) {
       Ok(row) => install_name(image, &row.name),
       Err(err) => log::warn!("desktop members: {err}, skipping"),
    }
-   match desktop::dm_row(image) {
+   match crate::located::get("desktop::dm_row", || desktop::dm_row(image)) {
       Ok(row) => install_dm(image, &row),
       Err(err) => log::warn!("desktop members: {err}, skipping the DM list"),
    }

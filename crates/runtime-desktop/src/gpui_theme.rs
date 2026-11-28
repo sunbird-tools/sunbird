@@ -12,10 +12,9 @@ use std::path::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::index::Index;
 
 /// Installs the cross-platform `--radius-scale` Scene hook during `prepare()`.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
    radius::install(image, ix);
 }
 
@@ -76,12 +75,9 @@ mod radius {
    use std::sync::OnceLock;
 
    use phoenix_hook::image::Image;
-   use phoenix_sigs::{
-      index::Index,
-      locate::mana_theme::{
-         self,
-         SceneDraw,
-      },
+   use phoenix_sigs::locate::mana_theme::{
+      self,
+      SceneDraw,
    };
 
    static SCENE: OnceLock<SceneDraw> = OnceLock::new();
@@ -340,8 +336,9 @@ mod radius {
       all(target_arch = "x86_64", any(windows, target_os = "linux")),
       all(target_os = "macos", target_arch = "aarch64")
    ))]
-   pub(super) fn install(image: &Image<'static>, ix: &Index<'_>) {
-      let found = match mana_theme::scene_draw(ix) {
+   pub(super) fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+      let found = match crate::located::get("mana_theme::scene_draw", || mana_theme::scene_draw(ix))
+      {
          Ok(found) => found,
          Err(err) => {
             log::warn!("desktop themes: radius hook disabled: {err}");
@@ -368,5 +365,5 @@ mod radius {
       all(target_arch = "x86_64", any(windows, target_os = "linux")),
       all(target_os = "macos", target_arch = "aarch64")
    )))]
-   pub(super) fn install(_image: &Image<'static>, _ix: &Index<'_>) {}
+   pub(super) fn install(_image: &Image<'static>, _ix: &crate::located::LazyIndex<'_>) {}
 }

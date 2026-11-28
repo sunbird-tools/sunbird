@@ -7,6 +7,10 @@ use iced_x86::{
    OpAccess,
    Register,
 };
+use serde::{
+   Deserialize,
+   Serialize,
+};
 
 use crate::{
    Found,
@@ -22,7 +26,7 @@ use crate::{
    one,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Surface {
    Composer,
    ServerList,
@@ -32,7 +36,7 @@ pub enum Surface {
    MessageToolbar,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Menu {
    Server,
    Channel,
@@ -54,14 +58,14 @@ impl Menu {
    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Menus {
    pub finish:    usize,
    pub drop_item: Option<usize>,
    pub calls:     Vec<MenuCall>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MenuCall {
    pub menu:   Menu,
    pub site:   usize,

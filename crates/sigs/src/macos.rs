@@ -2140,7 +2140,7 @@ pub fn asset_load(image: &Image<'_>) -> Found<usize> {
 }
 
 /// Message header hooks for macOS arm64 (`phoenix.ui.addMessageHeaderDecoration`).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MessageHeader {
    /// The author-name wrapper builder called only by the header row builders.
    pub name_producer: usize,
@@ -2658,7 +2658,7 @@ fn closure_reads_env_user(image: &Image<'_>, closure: usize, env_off: usize) -> 
 
 /// The DM list's row renderer, its name-box builder, and `Div::child::<AnyElement>`
 /// on macOS arm64.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DmRow {
    pub func:          usize,
    pub name_box:      usize,

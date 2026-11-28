@@ -11,12 +11,9 @@ use std::sync::{
 
 use phoenix_hook::image::Image;
 use phoenix_runtime::gateway;
-use phoenix_sigs::{
-   index::Index,
-   locate::ready::{
-      self,
-      ReadySession,
-   },
+use phoenix_sigs::locate::ready::{
+   self,
+   ReadySession,
 };
 
 /// The session's READY handler, `fn(out, payload) -> out`, owning the payload.
@@ -31,18 +28,13 @@ static REWRITTEN: Mutex<Option<String>> = Mutex::new(None);
 
 /// Hooks both of the session's ways into READY from [`crate::prepare`], once
 /// the registry is read and before Discord's threads run.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   let parse = match gateway::original_handler("READY")
-      .ok_or_else(|| "no READY handler".to_owned())
-      .and_then(|handler| ready::ready_parse(ix, handler))
-   {
-      Ok(parse) => parse,
-      Err(err) => {
-         log::warn!("ready: {err}, READY hooks stay off");
-         return;
-      },
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let parse = || {
+      gateway::original_handler("READY")
+         .ok_or_else(|| "no READY handler".to_owned())
+         .and_then(|handler| ready::ready_parse(ix, handler))
    };
-   match ready::ready_text(ix, &parse) {
+   match crate::located::get("ready::ready_text", || ready::ready_text(ix, &parse()?)) {
       Ok(func) => {
          // SAFETY: runs before Discord's threads, and the detour has the
          // parse's ABI with its return slot first.
@@ -55,7 +47,9 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
       },
       Err(err) => log::warn!("ready: {err}, READYs under 2 MB pass unhooked"),
    }
-   match ready::ready_session(ix, &parse) {
+   match crate::located::get("ready::ready_session", || {
+      ready::ready_session(ix, &parse()?)
+   }) {
       Ok(session) => {
          // SAFETY: as above, for the handler's ABI.
          if let Some(original) = unsafe {

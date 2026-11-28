@@ -43,7 +43,7 @@ const HANDLE_REACH: usize = 0x400;
 /// handle): `column` returns `width - rail - 1`, and `publish` hands the whole
 /// width to other views. The width getter's third caller saves the width to
 /// settings, so the getter answers the rail only inside the other two.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ChannelSidebar {
    /// `f32 width(&RootModel, &App)`.
    pub width:       usize,
@@ -203,7 +203,7 @@ fn covered(ix: &Index<'_>, publish: usize) -> Found<usize> {
 
 /// The channel header toolbar's member list button, which plugin header
 /// buttons follow.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ChannelToolbar {
    /// `button(out, id, id_len, icon: u16, tooltip: &mut SharedString,
    /// selected, _, cx) -> out`, the toolbar icon button builder.

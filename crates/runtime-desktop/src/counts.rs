@@ -23,7 +23,6 @@ use std::{
 use phoenix_hook::image::Image;
 use phoenix_sigs::{
    Found,
-   index::Index,
    locate::counts::{
       self,
       FRIENDS_BADGE,
@@ -89,8 +88,8 @@ enum Returns {
 
 /// Hooks what draws and computes the counts from [`crate::prepare`], before
 /// Discord's threads run.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   let found = match counts::pending_counts(ix) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let found = match crate::located::get("counts::pending_counts", || counts::pending_counts(ix)) {
       Ok(found) => found,
       Err(err) => {
          log::warn!("pending counts: {err}, the counts stay");
@@ -99,9 +98,15 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
    };
    // They read the friend requests count's code, so they look before it is
    // hooked.
-   let home = counts::home_count(ix, found.friend_requests);
-   let home_state = counts::home_badge(ix, found.friend_requests);
-   let tallies = counts::relationship_counts(ix);
+   let home = crate::located::get("counts::home_count", || {
+      counts::home_count(ix, found.friend_requests)
+   });
+   let home_state = crate::located::get("counts::home_badge", || {
+      counts::home_badge(ix, found.friend_requests)
+   });
+   let tallies = crate::located::get("counts::relationship_counts", || {
+      counts::relationship_counts(ix)
+   });
 
    for (index, &func) in found.badges.iter().take(BADGES).enumerate() {
       // SAFETY: runs before Discord's threads, and the detour has the badge's

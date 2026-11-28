@@ -47,7 +47,7 @@ use crate::{
 /// One instruction's bytes as Discord ships them and as patched. An x86 patch
 /// is one byte and an arm64 one a whole aligned instruction, so a thread at
 /// `site` runs the old or the new instruction whole.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CodePatch {
    pub site:    usize,
    pub len:     usize,
@@ -506,7 +506,7 @@ pub fn media_fetch<'ix>(ix: &'ix Index<'ix>) -> Found<Func<'ix>> {
 
 /// `getEmojiUnavailableReason(&Emoji, &EmojiContext)`, a leaf that answers 3
 /// for profiles before anything else.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EmojiCheck {
    pub func:      usize,
    /// `EmojiContext.intention`, 3 (`CHAT`) for the message box.

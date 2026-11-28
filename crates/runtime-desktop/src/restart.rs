@@ -27,7 +27,9 @@ Start-Process -FilePath $exePath @opts
 "#;
 
 pub fn install(image: &Image<'static>) {
-   let addr = match windows_restart_script(image) {
+   let addr = match crate::located::get("desktop::windows_restart_script", || {
+      windows_restart_script(image)
+   }) {
       Ok(addr) => addr,
       Err(err) => {
          log::warn!("could not redirect Discord restart: {err}");

@@ -13,7 +13,9 @@ use crate::{
 
 /// `MenuItem::Submenu`, from the constructor Discord's own submenus ("Create
 /// Reminder", "Apps") go through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+   Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct SubmenuLayout {
    pub tag:        u64,
    /// The `Rc<dyn Fn() -> Vec<MenuItem>>` that builds the items on opening,

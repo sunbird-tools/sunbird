@@ -13,10 +13,7 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::call_idle,
-};
+use phoenix_sigs::locate::call_idle;
 
 static DM_OFF: AtomicBool = AtomicBool::new(false);
 static AFK_OFF: AtomicBool = AtomicBool::new(false);
@@ -44,8 +41,8 @@ impl FromStr for Timer {
 
 /// Hooks the solo DM call timer from [`crate::prepare`], before Discord's
 /// threads run.
-pub fn install_dm(image: &Image<'static>, ix: &Index<'_>) {
-   match call_idle::dm_idle(ix) {
+pub fn install_dm(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   match crate::located::get("call_idle::dm_idle", || call_idle::dm_idle(ix)) {
       // SAFETY: runs before Discord's threads, and the shim keeps the poll's
       // ABI.
       Ok(poll) => unsafe { hook(image, poll, dm_shim as *const () as usize, &DM_POLL) },
@@ -54,8 +51,8 @@ pub fn install_dm(image: &Image<'static>, ix: &Index<'_>) {
 }
 
 /// Hooks the guild AFK move and disconnect timers from [`crate::prepare`].
-pub fn install_guild_afk(image: &Image<'static>, ix: &Index<'_>) {
-   match call_idle::guild_afk(ix) {
+pub fn install_guild_afk(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   match crate::located::get("call_idle::guild_afk", || call_idle::guild_afk(ix)) {
       Ok(found) => {
          // SAFETY: as in `install_dm`.
          unsafe {

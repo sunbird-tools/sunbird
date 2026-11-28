@@ -37,7 +37,6 @@ use phoenix_sigs::{
       icon_names,
       layout,
    },
-   index::Index,
    locate::menu::{
       self,
       SubmenuLayout,
@@ -376,8 +375,8 @@ fn legacy_icon(icon: &str) -> Option<u16> {
 }
 
 /// Locates and hooks `MessageContextMenu` from `DllMain`.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   match icon_names(image) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   match crate::located::get("desktop::icon_names", || icon_names(image)) {
       Ok(names) => {
          let _ = ICON_NAMES.set(names);
       },
@@ -388,13 +387,24 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
       arm64::install(image, ix);
       return;
    }
-   let menu = match desktop::message_context_menu(image) {
+   let menu = match crate::located::get("desktop::message_context_menu", || {
+      desktop::message_context_menu(image)
+   }) {
       Ok(menu) => menu,
       Err(err) => {
          log::warn!("desktop context menu: {err}, skipping");
          return;
       },
    };
+   #[cfg(windows)]
+   let id_offset = crate::located::get("surfaces::menu_id_field", || {
+      phoenix_sigs::locate::surfaces::menu_id_field(ix, menu.with_id, menu.layout.props_size)
+         .ok_or_else(|| "native menu id field not found".to_owned())
+   })
+   .ok()
+   .map(|relative| menu.layout.props + relative);
+   #[cfg(not(windows))]
+   let id_offset = None;
 
    // SAFETY: runs from `prepare` before Discord threads execute;
    // `build_context_menu_detour` matches `MessageContextMenu`'s 8-arg sret ABI.
@@ -412,29 +422,19 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
    // SAFETY: every address was validated by `desktop::message_context_menu`.
    let syms = unsafe {
       MenuSymbols {
-         orig_build:                     Some(orig_build),
-         msg_ptr_offset:                 menu.msg_ptr_offset,
-         msg_id_offset:                  menu.msg_id_offset,
-         channel_id_offset:              menu.channel_id_offset,
-         props_new:                      std::mem::transmute::<usize, PropsNewFn>(menu.props_new),
-         with_id:                        std::mem::transmute::<usize, WithIdFn>(menu.with_id),
-         with_icon:                      std::mem::transmute::<usize, WithIconFn>(menu.with_icon),
-         with_color:                     Some(std::mem::transmute::<usize, WithColorFn>(
-            menu.with_color,
-         )),
-         vec_push:                       std::mem::transmute::<usize, VecPushFn>(menu.vec_push),
-         separator_tag:                  Some(layout::MENU_ITEM_SEPARATOR_TAG),
-         layout:                         menu.layout,
-         #[cfg(windows)]
-         id_offset:                      phoenix_sigs::locate::surfaces::menu_id_field(
-            ix,
-            menu.with_id,
-            menu.layout.props_size,
-         )
-         .map(|relative| menu.layout.props + relative),
-         #[cfg(not(windows))]
-         id_offset:                      None,
-         submenu:                        submenu(ix),
+         orig_build: Some(orig_build),
+         msg_ptr_offset: menu.msg_ptr_offset,
+         msg_id_offset: menu.msg_id_offset,
+         channel_id_offset: menu.channel_id_offset,
+         props_new: std::mem::transmute::<usize, PropsNewFn>(menu.props_new),
+         with_id: std::mem::transmute::<usize, WithIdFn>(menu.with_id),
+         with_icon: std::mem::transmute::<usize, WithIconFn>(menu.with_icon),
+         with_color: Some(std::mem::transmute::<usize, WithColorFn>(menu.with_color)),
+         vec_push: std::mem::transmute::<usize, VecPushFn>(menu.vec_push),
+         separator_tag: Some(layout::MENU_ITEM_SEPARATOR_TAG),
+         layout: menu.layout,
+         id_offset,
+         submenu: submenu(ix),
       }
    };
    #[cfg(not(windows))]
@@ -723,8 +723,8 @@ fn make_action_item(
 }
 
 /// The layout plugin submenus copy, with [`SUBMENU_VTBL`] set up for it.
-fn submenu(ix: &Index<'_>) -> Option<SubmenuLayout> {
-   let layout = menu::submenu(ix)
+fn submenu(ix: &crate::located::LazyIndex<'_>) -> Option<SubmenuLayout> {
+   let layout = crate::located::get("menu::submenu", || menu::submenu(ix))
       .inspect_err(|err| log::warn!("desktop context menu: {err}, submenus show inline"))
       .ok()?;
    let build = build_submenu as *const () as usize;
@@ -1010,7 +1010,6 @@ mod arm64 {
       Image,
       sret_caller,
    };
-   use phoenix_sigs::index::Index;
 
    use super::{
       ACTIVE_COUNT,
@@ -1044,7 +1043,7 @@ mod arm64 {
       (1 << 32..1 << 63).contains(&value)
    }
 
-   pub fn install(image: &Image<'static>, ix: &Index<'_>) {
+   pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
       let menu = match phoenix_sigs::macos::message_context_menu(image) {
          Ok(menu) => menu,
          Err(err) => {
@@ -1237,7 +1236,8 @@ fn press_item(
    // ponytail: leaks the items (their handlers and labels), a few hundred
    // bytes per double click; drop them through Discord's `Vec<MenuItem>` drop
    // if that ever matters.
-   // SAFETY: `vec` is the builder's `Vec<MenuItem>`, whose items stay allocated.
+   // SAFETY: `vec` is the builder's `Vec<MenuItem>`, whose items stay
+   // allocated.
    unsafe { (*vec).len = 0 };
    true
 }

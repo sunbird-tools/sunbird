@@ -14,6 +14,7 @@ flub         = { workspace = true }
 memchr       = { workspace = true }
 object       = { optional = true, workspace = true }
 phoenix-hook = { workspace = true }
+serde        = { workspace = true }
 
 [target.'cfg(any(target_arch = "x86_64", target_os = "macos"))'.dependencies]
 iced-x86 = { workspace = true }

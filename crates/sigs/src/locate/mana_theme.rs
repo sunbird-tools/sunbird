@@ -33,7 +33,7 @@ use crate::{
 /// Byte offsets inside `ManaTheme` and its `Arc` payloads, decoded from
 /// `drop_in_place::<ManaTheme>` and `PartialEq::eq::<ManaTheme>` rather than
 /// hardcoded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ManaThemeLayout {
    /// `ThemeRef` enum (`tag` at +0, `payload` at +8).
    pub theme_ref:        usize,
@@ -55,7 +55,7 @@ pub struct ManaThemeLayout {
 
 /// Everything the desktop theming engine needs to hook `ManaTheme` and mutate
 /// its `SemanticColors` table without hardcoding struct sizes or field offsets.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ManaTheme {
    /// `gpui::App::set_global::<ManaTheme>(&mut self, global: ManaTheme)`.
    pub set_global:    usize,
@@ -761,7 +761,7 @@ fn decode_eq_layout(
 
 /// Renderer draw entrypoint and `Scene::quads` `Vec` offset for cross-platform
 /// `--radius-scale` corner-radius scaling.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SceneDraw {
    /// `WgpuRenderer::draw` / `D3D` renderer `draw` (x86-64) or
    /// `MetalRenderer::draw` (macOS arm64), taking `(renderer, scene, ...)`.

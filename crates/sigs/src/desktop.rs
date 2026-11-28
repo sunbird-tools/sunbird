@@ -791,7 +791,7 @@ pub fn entry_moved(image: &Image<'_>, func: usize) -> Found<usize> {
 }
 
 /// Discord's own GPUI and Mana builders the settings page calls.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Gpui {
    /// The `Location` `div_new` takes, a static in `.rdata`.
    pub caller_loc:       usize,
@@ -821,7 +821,7 @@ pub struct Gpui {
 /// `StyleRefinement` field offsets, read by name from its derived `Debug`.
 /// Edges are `[top, right, bottom, left]`, corners `[top_left, top_right,
 /// bottom_right, bottom_left]` and sizes `[width, height]`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct StyleOffsets {
    /// `StyleRefinement` bytes, from `Interactivity::default`'s box.
    pub bytes:           usize,
@@ -853,7 +853,7 @@ pub struct StyleOffsets {
 
 /// `gpui::Div`: its size, `SmallVec<[AnyElement; 2]>` children, and boxed
 /// `Interactivity`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct DivLayout {
    pub size:               usize,
    pub children:           usize,
@@ -862,7 +862,7 @@ pub struct DivLayout {
 }
 
 /// `mana_gpui::components::switch::Switch`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct SwitchLayout {
    pub size:        usize,
    pub label:       usize,
@@ -871,7 +871,7 @@ pub struct SwitchLayout {
 }
 
 /// `mana_gpui::components::button::Button`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ButtonLayout {
    pub size:     usize,
    pub on_click: usize,
@@ -881,7 +881,7 @@ pub struct ButtonLayout {
 }
 
 /// What the settings page and accessories build by hand.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct GpuiLayout {
    pub style:  StyleOffsets,
    pub div:    DivLayout,
@@ -1253,14 +1253,40 @@ fn hex_disp(text: &str) -> Option<usize> {
 
 /// What the island in front of a hooked call hands its detour after the
 /// callee's own arguments, and what frame slots are read from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Frame {
    /// A register of the caller: `rbp`, which Win64 frames address their slots
    /// from, or a callee-saved register holding a pointer the detour reads.
-   Reg(Register),
+   Reg(#[serde(with = "register")] Register),
    /// The caller's `rsp` at the call. System V frames address their slots
    /// from it, keeping no frame pointer.
    Stack,
+}
+
+/// A register by its `iced_x86` number, for saved locator results.
+mod register {
+   use iced_x86::Register;
+   use serde::{
+      Deserialize,
+      Deserializer,
+      Serializer,
+      de::Error,
+   };
+
+   #[expect(
+      clippy::trivially_copy_pass_by_ref,
+      reason = "serde's `with` passes the field by reference"
+   )]
+   pub fn serialize<S: Serializer>(register: &Register, serializer: S) -> Result<S::Ok, S::Error> {
+      serializer.serialize_u8(*register as u8)
+   }
+
+   pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Register, D::Error> {
+      let number = u8::deserialize(deserializer)?;
+      Register::values()
+         .find(|register| *register as u8 == number)
+         .ok_or_else(|| D::Error::custom(format!("no register {number}")))
+   }
 }
 
 impl Frame {
@@ -1424,6 +1450,7 @@ fn returned_into(
 }
 
 /// The member list's row renderer, and where its name joins the row.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct MemberRow {
    pub func: usize,
    pub name: MemberName,
@@ -1435,7 +1462,7 @@ pub struct MemberRow {
 /// closure keeps its environment pointer in a frame slot on Win64 and in a
 /// callee-saved register on System V, and the environment a pointer to the
 /// member's user id.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MemberName {
    pub sites:        Vec<usize>,
    /// What the islands hand the detour.
@@ -1588,7 +1615,7 @@ pub fn member_row(image: &Image<'_>) -> Found<MemberRow> {
 /// with `Div::child` by value, `(sret, div, &name) -> Div`. One-to-one DMs keep
 /// their recipient as an `Option<UserId>` copied into two frame slots, the
 /// one the row's presence dot (`dm-status`) is keyed by; group DMs have none.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DmRow {
    pub func:  usize,
    /// The call adding the name box.
@@ -1746,7 +1773,7 @@ pub fn dm_row(image: &Image<'_>) -> Found<DmRow> {
 ///
 /// Headers are not GPUI `Div`s but Discord's own `Rc<Node>` handles: every
 /// builder call takes the handle and returns it, cloned first when shared.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MessageHeader {
    /// The calls adding the name, one per display mode.
    pub sites:      Vec<HeaderSite>,
@@ -1758,7 +1785,7 @@ pub struct MessageHeader {
 }
 
 /// Discord's node SVG leaf, drawn from an asset path.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NodeSvg {
    /// `svg_new(out, path ptr, path len, size: f32)`.
    pub new:   usize,
@@ -1771,7 +1798,7 @@ pub struct NodeSvg {
 }
 
 /// A `call child_node` adding the name wrapper to a header row.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HeaderSite {
    pub site: usize,
    /// `[frame+slot]` holds the message id at the call.
@@ -2069,7 +2096,7 @@ fn node_svg(image: &Image<'_>, body: usize) -> Found<NodeSvg> {
 const BUNDLED_SVG: &[u8] = b"features_ui/platform-spotify.svg";
 
 /// GPUI's `Svg` element builders.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SvgBuilders {
    /// `svg()`: `(sret, &caller_location) -> Svg`.
    pub new:       usize,
@@ -2263,6 +2290,7 @@ pub fn composer_gift(image: &Image<'_>) -> Found<usize> {
 
 /// `MessageContextMenu` builder and native `MenuItem` helpers for injecting
 /// `phoenix.ui.addMessageAction` entries into right-click and `...` menus.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct MessageContextMenu {
    pub build_fn:          usize,
    pub msg_ptr_offset:    usize,
@@ -2277,7 +2305,7 @@ pub struct MessageContextMenu {
 }
 
 /// `MenuItem` and its `Action` variant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct MenuLayout {
    pub size:         usize,
    /// `MenuItemProps` inside `MenuItem::Action`.
@@ -2564,6 +2592,7 @@ fn string_leas(image: &Image<'_>, needles: &[&[u8]]) -> HashMap<usize, Vec<usize
 /// builders, `Vec<AnyElement>::push`, `Div::id` (required for mouse-wheel
 /// scrolling), GPUI's `WM_USER+5` force-redraw validation-number offset, and
 /// the backdrop's click-outside wiring.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Modal {
    pub overlay_render:           usize,
    pub vec_push_any:             usize,
@@ -2578,7 +2607,7 @@ pub struct Modal {
 }
 
 /// `mana_html::hosted::modal::Modal`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ModalLayout {
    pub size:     usize,
    /// `Vec<AnyElement>` of body children and of footer buttons.
@@ -2598,7 +2627,7 @@ pub struct ModalLayout {
 /// `Interactivity::on_mouse_down` pushes a `Box<dyn Fn(&MouseDownEvent,
 /// DispatchPhase, &Hitbox, &mut Window, &mut App)>`, whose wrapper checks
 /// `Hitbox::is_hovered` and calls `cx.stop_propagation()`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Dismiss {
    /// `Interactivity` offset of the mouse-down listener `Vec`.
    pub mouse_down_listeners: usize,
@@ -2793,7 +2822,7 @@ pub fn modal(image: &Image<'_>, div_into_any: usize, div: &DivLayout) -> Found<M
 /// `status` an `Rc<Cell<u8>>` (7 idle, 5 requested, 1 in flight, 2 again),
 /// `ping` the calloop `Ping` whose callback calls [`Self::frame`] on every
 /// requested window, and `requested` an `Rc<Cell<Option<Instant>>>`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct WaylandFrame {
    /// `WaylandWindowStatePtr::frame(&window, requested, force)`, which hands
    /// the window's `request_frame` callback `state + force_render` as its
@@ -2894,7 +2923,7 @@ pub fn va_scaler_lookup(image: &Image<'_>) -> Found<VaScalerSkip> {
 
 /// GPUI's `LinuxPlatform::primary_display` and `displays`, the slot before
 /// it in the `Platform` vtable.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct LinuxPrimaryDisplay {
    pub primary_display: usize,
    pub displays:        usize,
@@ -3217,6 +3246,7 @@ fn on_mouse_down_shape(
 
 /// Native Mana/GPUI `FieldState`, `TextInput`, and `TextArea` bindings for
 /// in-app URL entry and plugin code editing.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct TextFields {
    pub cx_new_single:       usize,
    pub cx_new_multiline:    usize,
@@ -3236,7 +3266,7 @@ pub struct TextFields {
 
 /// Mana `FieldState`, the hosted `TextInput` and `TextArea` built on it, and
 /// the GPUI handles they go through.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct FieldLayout {
    pub text_input_size:   usize,
    pub text_input_entity: usize,
@@ -4062,7 +4092,7 @@ pub fn animation_frame(image: &Image<'_>) -> Found<usize> {
 
 /// `serde_json::to_value::<Message>`, which Phoenix runs to store a message,
 /// and `drop_in_place::<serde_json::Value>`, which frees what it returns.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MessageJson {
    /// `fn(out: *mut Result<Value, Error>, message: *const Message)`.
    pub to_value:   usize,

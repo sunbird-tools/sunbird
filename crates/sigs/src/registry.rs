@@ -58,7 +58,7 @@ impl EventId {
    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GatewayEntry {
    pub name:    String,
    /// All registry table slots holding this event's `{name_ptr, name_len,
@@ -101,13 +101,23 @@ impl GatewayRegistry {
          }
       }
 
+      Ok(Self::from_entries(entries))
+   }
+
+   /// The registry [`Self::entries`] came from, on the same build.
+   #[must_use]
+   pub fn from_entries(entries: Vec<GatewayEntry>) -> Self {
       let by_name = entries
          .iter()
          .enumerate()
          .map(|(index, entry)| (entry.name.clone(), EventId(index)))
          .collect();
+      Self { entries, by_name }
+   }
 
-      Ok(Self { entries, by_name })
+   #[must_use]
+   pub fn entries(&self) -> &[GatewayEntry] {
+      &self.entries
    }
 
    #[must_use]

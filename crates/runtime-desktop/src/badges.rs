@@ -23,10 +23,7 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate,
-};
+use phoenix_sigs::locate;
 
 use crate::gpui;
 
@@ -52,9 +49,11 @@ static ORIG_MEDIA_FETCH: OnceLock<MediaFetchFn> = OnceLock::new();
 
 /// Locates and inline-hooks `libdiscord_media::fetch` during
 /// [`crate::prepare`].
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   let func = match locate::media_fetch(ix) {
-      Ok(func) => func.start,
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let func = match crate::located::get("locate::media_fetch", || {
+      locate::media_fetch(ix).map(|func| func.start)
+   }) {
+      Ok(func) => func,
       Err(err) => {
          log::warn!("desktop badges: {err}, custom badge icons disabled");
          return;

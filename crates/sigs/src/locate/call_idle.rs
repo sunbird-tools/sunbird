@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// The guild AFK timer's two `Future::poll`s.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GuildAfk {
    pub move_poll:       usize,
    pub disconnect_poll: usize,

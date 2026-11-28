@@ -81,7 +81,7 @@ pub fn install(image: &Image<'static>) {
       return;
    }
    let found = if crate::X86_CODE {
-      desktop::asset_load(image)
+      crate::located::get("desktop::asset_load", || desktop::asset_load(image))
    } else {
       phoenix_sigs::macos::asset_load(image)
    };

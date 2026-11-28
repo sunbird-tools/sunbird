@@ -29,7 +29,6 @@ use std::{
 use phoenix_hook::image::Image;
 use phoenix_sigs::{
    desktop::layout,
-   index::Index,
    locate::channel,
 };
 
@@ -91,14 +90,15 @@ static CLICK_VTBL: RcFnVtbl = RcFnVtbl {
 
 /// Hooks the toolbar icon button builder and `append` from
 /// [`crate::prepare`], before Discord's threads run.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   let found = match channel::channel_toolbar(ix) {
-      Ok(found) => found,
-      Err(err) => {
-         log::warn!("header buttons: {err}, none are drawn");
-         return;
-      },
-   };
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let found =
+      match crate::located::get("channel::channel_toolbar", || channel::channel_toolbar(ix)) {
+         Ok(found) => found,
+         Err(err) => {
+            log::warn!("header buttons: {err}, none are drawn");
+            return;
+         },
+      };
    MEMBERS_ID.store(found.members_id, Ordering::Release);
    ON_CLICK.store(found.on_click, Ordering::Release);
    TOOLBAR_SIZE.store(found.toolbar_size, Ordering::Release);
