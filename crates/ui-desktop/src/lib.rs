@@ -22,8 +22,7 @@ use std::{
 
 #[cfg(target_os = "linux")] use linux::Host as Os;
 #[cfg(target_os = "macos")] use macos::Host as Os;
-#[cfg(all(target_os = "macos", debug_assertions))]
-pub use macos::input;
+#[cfg(target_os = "macos")] pub use macos::input;
 #[cfg(target_os = "macos")] pub use macos::redraw_windows;
 #[cfg(windows)] use windows::Host as Os;
 

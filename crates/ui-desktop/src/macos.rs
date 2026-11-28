@@ -420,7 +420,7 @@ msg_send!(send_symbol(name: Id, description: Id) -> Id);
 msg_send!(send_item(title: Id, action: Sel, key: Id) -> Id);
 msg_send!(send_tag() -> isize);
 
-#[cfg(debug_assertions)] pub mod input;
+pub mod input;
 
 /// An autoreleased `NSString`, stripping interior NUL bytes so `AppKit` calls
 /// that reject `nil` never throw `NSInvalidArgumentException`.

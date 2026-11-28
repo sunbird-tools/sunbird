@@ -554,7 +554,6 @@ mod arm64 {
 
    use phoenix_hook::image::Image;
    use phoenix_sigs::{
-      index::Index,
       locate::message::{
          self,
          BodyColors,
