@@ -100,12 +100,30 @@ fn refs_to(image: &Image<'_>, anchors: &[usize]) -> Vec<(usize, usize)> {
 /// The functions that load or call any of `anchors`, each once, in address
 /// order.
 fn loaders(image: &Image<'_>, anchors: &[usize]) -> Vec<usize> {
-   let sites = refs_to(image, anchors).into_iter();
-   sorted(
-      sites
-         .filter_map(|(site, _)| image.function_containing(site))
-         .collect(),
-   )
+   let elf = image.function_starts.is_none();
+   let mut found = Vec::new();
+   for (site, _) in refs_to(image, anchors) {
+      let Some(func) = image.function_containing(site) else {
+         continue;
+      };
+      // ELF builds outline a template load with its call (`adrp x0; add x0;
+      // .. b format`), so the stub's callers are the loaders.
+      let outlined = elf
+         && image.function_bounds(func).is_some_and(|(start, end)| end - start <= 12 * 4)
+         && stub(image, func).is_some();
+      if outlined {
+         found.extend(
+            refs_to(image, &[func])
+               .into_iter()
+               .filter_map(|(caller, _)| image.function_containing(caller)),
+         );
+      } else {
+         found.push(func);
+      }
+   }
+   let mut found = sorted(found);
+   found.dedup();
+   found
 }
 
 /// `mov w0, #2; ret`: the access function's "no gate".
@@ -2234,24 +2252,19 @@ pub fn message_header(image: &Image<'_>) -> Found<MessageHeader> {
       if code.len() > 16 {
          return false;
       }
-      code.windows(2).any(|pair| {
-         matches!(
-            (pair[0].1, pair[1].1),
-            (
-               Insn::Store {
-                  rt: 31,
-                  rn: 31,
-                  offset: 0,
-                  size: 4,
-               },
-               Insn::Store {
-                  rt: 1,
-                  rn: 31,
-                  offset: 8,
-                  size: 8,
-               },
-            )
-         )
+      // Both stores of the child's handle, adjacent on Mach-O builds, and in
+      // either order around a call on ELF builds.
+      let stores = |want: Insn| code.iter().any(|&(_, insn)| insn == want);
+      stores(Insn::Store {
+         rt:     31,
+         rn:     31,
+         offset: 0,
+         size:   4,
+      }) && stores(Insn::Store {
+         rt:     1,
+         rn:     31,
+         offset: 8,
+         size:   8,
       })
    };
 
@@ -2279,9 +2292,19 @@ pub fn message_header(image: &Image<'_>) -> Found<MessageHeader> {
    let child_node = one("header child_node", &sorted(child_nodes))?;
 
    let all: std::collections::HashSet<usize> = builders.iter().copied().collect();
+   // Every builder shares one producer on Mach-O builds. Linux arm64 splits
+   // it into monomorphizations (the cozy and compact headers share one, a
+   // third header builder has its own), so there it takes the one that at
+   // least two builders call, and only builders call.
+   let elf = image.function_starts.is_none();
+   let callees = if elf {
+      builder_callees.iter().flatten().copied().collect::<std::collections::HashSet<_>>()
+   } else {
+      builder_callees[0].clone()
+   };
    let mut producers = Vec::new();
-   for &callee in &builder_callees[0] {
-      if !builder_callees[1..].iter().all(|set| set.contains(&callee)) {
+   for &callee in &callees {
+      if !elf && !builder_callees[1..].iter().all(|set| set.contains(&callee)) {
          continue;
       }
       let Some((_, code)) = arm64::function(image, callee) else {
@@ -2291,12 +2314,16 @@ pub fn message_header(image: &Image<'_>) -> Found<MessageHeader> {
          continue;
       }
       let callers = loaders(image, &[callee]);
-      if !callers.is_empty()
-         && callers.iter().all(|c| all.contains(c))
-         && builders
-            .iter()
-            .all(|&builder| feeds_child_node(image, builder, callee, child_node))
-      {
+      let feeds = |builder: &usize| feeds_child_node(image, *builder, callee, child_node);
+      // On ELF the compact builder hands the name on in a way
+      // feeds_child_node doesn't follow, so one builder feeding child_node is
+      // enough there.
+      let fed = if elf {
+         callers.len() >= 2 && callers.iter().any(feeds)
+      } else {
+         !callers.is_empty() && builders.iter().all(feeds)
+      };
+      if fed && callers.iter().all(|c| all.contains(c)) {
          producers.push(callee);
       }
    }
@@ -2492,9 +2519,14 @@ fn feeds_child_node(image: &Image<'_>, builder: usize, producer: usize, child_no
       Stack(usize),
    }
 
-   let Some((_, code)) = arm64::function(image, builder) else {
+   let Some((_, mut code)) = arm64::function(image, builder) else {
       return false;
    };
+   // ELF builds move the producer's result and child_node's argument in
+   // outlined stubs.
+   if image.function_starts.is_none() {
+      code = flattened_at(image, builder);
+   }
    let mut saved = Vec::new();
    for (at, &(_, insn)) in code.iter().enumerate() {
       if insn != (Insn::Bl { target: producer }) {
