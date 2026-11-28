@@ -1,6 +1,6 @@
 #[cfg(any(
    all(target_arch = "x86_64", any(target_os = "linux", windows)),
-   all(target_os = "macos", target_arch = "aarch64"),
+   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
 ))]
 use std::ptr::NonNull;
 use std::{
@@ -1129,7 +1129,13 @@ impl Image<'static> {
          writes.push((word, usize::from_le_bytes(current)));
       }
       // SAFETY: aligned words in this module, under the caller's guarantee.
-      unsafe { self.swap_words(&writes) }.map(drop)
+      unsafe { self.swap_words(&writes) }?;
+      // SAFETY: the range was just written and stays mapped.
+      #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+      unsafe {
+         flush_icache(addr, bytes.len());
+      }
+      Ok(())
    }
 
    /// Refuses, since the call-site hook only rewrites x86 calls. The macOS
@@ -1138,7 +1144,7 @@ impl Image<'static> {
    /// # Safety
    ///
    /// None, nothing is written.
-   #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+   #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
    pub unsafe fn hook_call(
       &self,
       site: usize,
@@ -1237,7 +1243,7 @@ impl Image<'static> {
 
 #[cfg(any(
    all(target_arch = "x86_64", any(target_os = "linux", windows)),
-   all(target_os = "macos", target_arch = "aarch64"),
+   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
 ))]
 impl Image<'static> {
    /// Sends calls to the function at `addr` to `detour` through sunhook, and
@@ -1266,7 +1272,7 @@ impl Image<'static> {
    ///
    /// `detour` expects the function's arguments in `x0..=x2` plus the
    /// original's entry in `x3`, and `addr` starts a function.
-   #[cfg(target_os = "macos")]
+   #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
    pub unsafe fn hook_entry_with_fallback(
       &self,
       addr: usize,
@@ -1303,8 +1309,10 @@ impl Image<'static> {
    ///
    /// `detour` has the function's ABI with the return slot moved first, and
    /// `addr` starts a function.
-   #[cfg(target_os = "macos")]
+   #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
    pub unsafe fn hook_sret_entry(&self, addr: usize, detour: usize) -> Result<usize, crate::Error> {
+      use crate::Hook as _;
+
       let no_memory = || {
          crate::Error::Attach {
             backend: "inline",
@@ -1313,9 +1321,16 @@ impl Image<'static> {
          }
       };
       let entry = sret_callee(detour).ok_or_else(no_memory)?;
+      let (target, entry) = self.hook_targets(addr, entry)?;
       // SAFETY: forwarded from the caller, `entry` moves `x8` first.
-      let original = unsafe { self.hook_entry(addr, entry) }?;
-      sret_caller(original).ok_or_else(no_memory)
+      let hook = unsafe { crate::Inline::attach(target, entry) }?;
+      if let Some(original) = sret_caller(hook.original().addr().get()) {
+         return Ok(original);
+      }
+      // SAFETY: the caller hooks before any thread reaches `addr`, so none is
+      // inside the detour or the trampoline yet.
+      unsafe { hook.detach() }?;
+      Err(no_memory())
    }
 
    pub(crate) fn hook_targets(
@@ -1333,26 +1348,26 @@ impl Image<'static> {
 }
 
 /// [`crate::arm64::sret_caller`] in executable memory, as a function pointer.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 #[must_use]
 pub fn sret_caller(target: usize) -> Option<usize> {
    jit_copy(&crate::arm64::sret_caller(target))
 }
 
-#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
 #[must_use]
 pub const fn sret_caller(_target: usize) -> Option<usize> {
    None
 }
 
 /// [`crate::arm64::sret_callee`] in executable memory, as a function pointer.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 #[must_use]
 pub fn sret_callee(detour: usize) -> Option<usize> {
    jit_copy(&crate::arm64::sret_callee(detour))
 }
 
-#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
 #[must_use]
 pub const fn sret_callee(_detour: usize) -> Option<usize> {
    None
@@ -1375,7 +1390,7 @@ pub(crate) fn jit_copy(code: &[u8]) -> Option<usize> {
    }
    static POOL: Mutex<Option<Slab>> = Mutex::new(None);
 
-   let aligned = (code.len() + 7) & !7;
+   let aligned = code.len().next_multiple_of(8);
    let mut pool = POOL.lock().unwrap_or_else(PoisonError::into_inner);
    let needs_new = pool
       .as_ref()
@@ -1413,6 +1428,79 @@ pub(crate) fn jit_copy(code: &[u8]) -> Option<usize> {
       std::ptr::copy_nonoverlapping(code.as_ptr(), dst, code.len());
       libc::pthread_jit_write_protect_np(1);
       sys_icache_invalidate(dst.cast(), code.len());
+   }
+   Some(dst as usize)
+}
+
+/// Makes `len` bytes of code just written at `addr` visible to instruction
+/// fetch, since arm64 does not keep the instruction cache coherent with stores.
+///
+/// # Safety
+///
+/// `addr..addr + len` is mapped.
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+unsafe fn flush_icache(addr: usize, len: usize) {
+   unsafe extern "C" {
+      fn __clear_cache(start: *mut std::ffi::c_char, end: *mut std::ffi::c_char);
+   }
+   // SAFETY: forwarded from the caller.
+   unsafe { __clear_cache(addr as *mut _, (addr + len) as *mut _) };
+}
+
+/// `code` in executable memory, bump-allocated out of shared slabs so hooks
+/// and sret thunks don't each burn a fresh page. Linux has no `MAP_JIT`, so
+/// the slab stays writable and executable.
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+fn jit_copy(code: &[u8]) -> Option<usize> {
+   use std::sync::{
+      Mutex,
+      PoisonError,
+   };
+
+   const SLAB_SIZE: usize = 16 * 1024;
+   struct Slab {
+      base: usize,
+      used: usize,
+      cap:  usize,
+   }
+   static POOL: Mutex<Option<Slab>> = Mutex::new(None);
+
+   let aligned = (code.len() + 7) & !7;
+   let mut pool = POOL.lock().unwrap_or_else(PoisonError::into_inner);
+   let needs_new = pool
+      .as_ref()
+      .is_none_or(|slab| slab.used.saturating_add(aligned) > slab.cap);
+   if needs_new {
+      let cap = aligned.max(SLAB_SIZE);
+      // SAFETY: asks for a fresh anonymous mapping that replaces nothing.
+      let page = unsafe {
+         libc::mmap(
+            std::ptr::null_mut(),
+            cap,
+            libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+         )
+      };
+      if page == libc::MAP_FAILED {
+         return None;
+      }
+      *pool = Some(Slab {
+         base: page as usize,
+         used: 0,
+         cap,
+      });
+   }
+   let slab = pool.as_mut()?;
+   let dst = (slab.base + slab.used) as *mut u8;
+   slab.used += aligned;
+   drop(pool);
+   // SAFETY: `dst` has `aligned >= code.len()` writable bytes in our slab,
+   // and no thread runs them before this returns their address.
+   unsafe {
+      std::ptr::copy_nonoverlapping(code.as_ptr(), dst, code.len());
+      flush_icache(dst as usize, code.len());
    }
    Some(dst as usize)
 }

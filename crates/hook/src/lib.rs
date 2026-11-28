@@ -24,10 +24,14 @@ pub mod pattern;
       any(target_arch = "aarch64", target_arch = "arm")
    ),
    all(target_arch = "x86_64", any(target_os = "linux", windows)),
-   all(target_os = "macos", target_arch = "aarch64"),
+   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
 ))]
 pub mod shadowhook;
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod x86;
 
 #[cfg(any(
@@ -36,7 +40,7 @@ pub mod x86;
       any(target_arch = "aarch64", target_arch = "arm")
    ),
    all(target_arch = "x86_64", any(target_os = "linux", windows)),
-   all(target_os = "macos", target_arch = "aarch64"),
+   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
 ))]
 pub type Inline = shadowhook::ShadowHook;
 

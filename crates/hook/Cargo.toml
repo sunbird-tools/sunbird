@@ -9,13 +9,13 @@ version.workspace = true
 flub   = { workspace = true }
 memchr = { workspace = true }
 
-[target.'cfg(any(target_arch = "x86_64", target_os = "macos"))'.dependencies]
+[target.'cfg(any(target_arch = "x86_64", target_os = "macos", all(target_os = "linux", target_arch = "aarch64")))'.dependencies]
 iced-x86 = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
-[target.'cfg(any(all(target_os = "android", any(target_arch = "aarch64", target_arch = "arm")), all(target_arch = "x86_64", any(target_os = "linux", windows)), all(target_os = "macos", target_arch = "aarch64")))'.dependencies]
+[target.'cfg(any(all(target_os = "android", any(target_arch = "aarch64", target_arch = "arm")), all(target_arch = "x86_64", any(target_os = "linux", windows)), all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))'.dependencies]
 sunhook-sys = { workspace = true }
 
 [lints]
