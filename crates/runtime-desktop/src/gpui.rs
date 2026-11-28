@@ -62,9 +62,14 @@ pub struct SharedString {
 }
 
 impl SharedString {
+   /// `Static(&'static str)` discriminant.
+   pub const STATIC: u8 = 0x18;
+   /// `Arc<str>` discriminant.
+   pub const ARC: u8 = 0x19;
+
    pub const fn from_static(s: &'static str) -> Self {
       Self {
-         tag:  0x18,
+         tag:  Self::STATIC,
          _pad: [0; 7],
          ptr:  s.as_ptr(),
          len:  s.len(),
@@ -89,7 +94,7 @@ impl SharedString {
          ptr::copy_nonoverlapping(s.as_ptr(), inner.add(16), s.len());
       }
       Self {
-         tag:  0x19,
+         tag:  Self::ARC,
          _pad: [0; 7],
          ptr:  inner.cast_const(),
          len:  s.len(),

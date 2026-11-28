@@ -486,10 +486,6 @@ const SETTLE_VEL: f32 = 0.01;
 const MAX_TRANSITION_SECS: f32 = 0.45;
 const FALLBACK_TICK: Duration = Duration::from_millis(16);
 
-/// The discriminant tag used by Rust/GPUI for a heap-allocated `SharedString` (Arc<str>).
-/// This relies on the niche optimization of GPUI's `SharedString` enum for this compiler version.
-const SHARED_STRING_HEAP_TAG: u8 = 0x19;
-
 #[derive(Clone, Copy)]
 struct Transition {
    started:   Instant,
@@ -1976,7 +1972,7 @@ unsafe fn write_field_pending(tf: &TextFieldSymbols, field: *mut c_void, text: &
 
 /// Drops a heap-backed `SharedString` read out of a field slot.
 unsafe fn release_shared_string(tf: &TextFieldSymbols, ss: &SharedString) {
-    if ss.tag != SHARED_STRING_HEAP_TAG || ss.ptr.is_null() {
+    if ss.tag != SharedString::ARC || ss.ptr.is_null() {
         return;
     }
     #[expect(clippy::cast_ptr_alignment, reason = "an `Arc` header is word aligned")]
@@ -2064,13 +2060,13 @@ unsafe fn read_field_text(app: *mut c_void, entity: &RawEntity) -> Option<String
 
 unsafe fn decode_shared_string(ss: &SharedString) -> String {
    let tag = ss.tag;
-   if tag <= 0x17 {
+   if tag < SharedString::STATIC {
       // SAFETY: inline bytes live at offsets `1..=tag` inside `SharedString`.
       let bytes =
          unsafe { slice::from_raw_parts(ptr::from_ref(ss).cast::<u8>().add(1), usize::from(tag)) };
       return String::from_utf8_lossy(bytes).into_owned();
    }
-   if tag == 0x18 {
+   if tag == SharedString::STATIC {
       if ss.ptr.is_null() || ss.len == 0 {
          return String::new();
       }
@@ -2078,7 +2074,7 @@ unsafe fn decode_shared_string(ss: &SharedString) -> String {
       let bytes = unsafe { slice::from_raw_parts(ss.ptr, ss.len) };
       return String::from_utf8_lossy(bytes).into_owned();
    }
-   if tag == 0x19 {
+   if tag == SharedString::ARC {
       if ss.ptr.is_null() || ss.len == 0 {
          return String::new();
       }
