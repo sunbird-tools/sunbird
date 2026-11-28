@@ -361,7 +361,8 @@ fn decode_colors_size(ix: &Index<'_>, get_mut: usize) -> Found<usize> {
       .arg(0)
       .ok_or_else(|| "ISA has no arg0 register".to_owned())?;
    let func = ix.func(get_mut)?;
-   let steps = func.steps();
+   // Flattened, since arm64 ELF builds move `self` aside in an outlined stub.
+   let steps = func.flat_steps();
 
    let mut self_regs = vec![arg0];
    for step in steps.iter().take(20) {
@@ -655,6 +656,34 @@ fn find_gradient_tag(
             if off >= size {
                return None;
             }
+            // Linux arm64 schedules both loads before the compares:
+            // `ldrb w8, [x0, #off]; ldrb w9, [x1, #off]; cmp w8, #n; cset;
+            // cmp w9, #n`.
+            if let Op::Load {
+               reg: other,
+               base: b2,
+               offset: o2,
+               size: 1,
+            } = steps.get(idx + 1)?.op
+               && b2 == arg1
+               && o2 == offset
+            {
+               let cmps = steps[idx + 2..]
+                  .iter()
+                  .take(4)
+                  .filter_map(|next| match next.op {
+                     Op::Cmp { reg: r, value } => Some((r, value)),
+                     _ => None,
+                  })
+                  .collect::<Vec<_>>();
+               return match cmps[..] {
+                  [(r1, v1), (r2, v2), ..] if r1 == reg && r2 == other && v1 == v2 => {
+                     let none = u8::try_from(v1).ok().filter(|&v| v > 0 && v < 16)?;
+                     Some((off, none))
+                  },
+                  _ => None,
+               };
+            }
             let Op::Cmp { reg: cmp_reg, value } = steps.get(idx + 1)?.op else {
                return None;
             };
@@ -720,7 +749,9 @@ fn decode_eq_layout(
       if func.size() < 64 || func.size() > 1024 {
          continue;
       }
-      let steps = func.steps();
+      // Flattened, so an arm64 ELF build's outlined stubs neither count as
+      // calls nor hide the field loads.
+      let steps = func.flat_steps();
       if steps.iter().any(|step| matches!(step.op, Op::Call(_))) {
          continue;
       }

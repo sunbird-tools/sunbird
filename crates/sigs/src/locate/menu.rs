@@ -54,10 +54,7 @@ pub fn submenu(ix: &Index<'_>) -> Found<SubmenuLayout> {
       .iter()
       .filter_map(|func| {
          shape(&func.head(HEAD), sp, |target| {
-            func
-               .outlined(target, 4)?
-               .iter()
-               .find_map(|step| imm(step.op))
+            ix.outlined(target, 4)?.iter().find_map(|step| imm(step.op))
          })
       })
       .collect::<Vec<_>>();

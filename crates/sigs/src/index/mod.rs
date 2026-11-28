@@ -71,6 +71,53 @@ pub struct Index<'img> {
 }
 
 impl<'img> Index<'img> {
+   /// The steps of the arm64 outlined stub at `target`, through its closing
+   /// `b T` or `ret`, or `None` when `target` is a function of its own. Mach-O
+   /// stubs are functions of at most `most` instructions. ELF builds have no
+   /// function starts, outline up to 12 instructions, and reach stubs past the
+   /// 128 MB `bl` range through a one-instruction linker veneer.
+   pub(crate) fn outlined(&self, target: usize, most: usize) -> Option<Vec<Step>> {
+      if self.isa != Isa::Aarch64 {
+         return None;
+      }
+      if self.image.function_starts.is_none() {
+         return self.outlined_elf(target, true);
+      }
+      let callee = self.function(target)?;
+      if callee.size() > most * 4 {
+         return None;
+      }
+      let mut steps = op::decode(self.image, self.isa, target, callee.end);
+      let end = steps
+         .iter()
+         .position(|step| matches!(step.op, Op::Jump(_) | Op::Ret | Op::Call(_) | Op::Branch(_)))?;
+      if !matches!(steps[end].op, Op::Jump(_) | Op::Ret) {
+         return None;
+      }
+      steps.truncate(end + 1);
+      Some(steps)
+   }
+
+   fn outlined_elf(&self, target: usize, veneer: bool) -> Option<Vec<Step>> {
+      const MOST: usize = 12;
+      let mut steps = Vec::new();
+      for step in op::decode_head(self.image, self.isa, target, target + MOST * 4, MOST) {
+         match step.op {
+            Op::Jump(tail) if steps.is_empty() && veneer && tail != target => {
+               return self.outlined_elf(tail, false).or_else(|| Some(vec![step]));
+            },
+            Op::Jump(_) | Op::Ret => {
+               steps.push(step);
+               return Some(steps);
+            },
+            Op::Call(_) | Op::Branch(_) => return None,
+            _ if step.writeback.is_some() => return None,
+            _ => steps.push(step),
+         }
+      }
+      None
+   }
+
    #[must_use]
    pub fn new(image: &'img Image<'img>, isa: Isa) -> Self {
       let base = image
@@ -609,34 +656,12 @@ impl<'ix> Func<'ix> {
    }
 
    pub(crate) fn through_outlined(&self, target: usize) -> Option<usize> {
-      self.outlined(target, 6).map_or(Some(target), |stub| {
+      self.ix.outlined(target, 6).map_or(Some(target), |stub| {
          match stub.last().map(|step| step.op) {
             Some(Op::Jump(tail)) => Some(tail),
             _ => None,
          }
       })
-   }
-
-   /// The steps of the arm64 outlined stub of at most `most` instructions at
-   /// `target`, through its closing `b T` or `ret`, or `None` when `target` is
-   /// a function of its own.
-   pub(crate) fn outlined(&self, target: usize, most: usize) -> Option<Vec<Step>> {
-      if self.ix.isa != Isa::Aarch64 {
-         return None;
-      }
-      let callee = self.ix.function(target)?;
-      if callee.size() > most * 4 {
-         return None;
-      }
-      let mut steps = op::decode(self.ix.image, self.ix.isa, target, callee.end);
-      let end = steps
-         .iter()
-         .position(|step| matches!(step.op, Op::Jump(_) | Op::Ret | Op::Call(_) | Op::Branch(_)))?;
-      if !matches!(steps[end].op, Op::Jump(_) | Op::Ret) {
-         return None;
-      }
-      steps.truncate(end + 1);
-      Some(steps)
    }
 
    /// [`Func::steps`] with each arm64 outlined stub's instructions in place of
@@ -656,7 +681,7 @@ impl<'ix> Func<'ix> {
                continue;
             },
          };
-         let Some(mut stub) = self.outlined(target, MOST) else {
+         let Some(mut stub) = self.ix.outlined(target, MOST) else {
             flat.push(step);
             continue;
          };
