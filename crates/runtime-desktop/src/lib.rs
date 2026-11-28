@@ -286,6 +286,9 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
       registry.as_ref().map(|_| ()).map_err(ToString::to_string),
    );
    if registry.is_ok() {
+      // Before the direct-call hooks: READY is found from the handler's first
+      // call, which reads as the hook's jump once the handler is hooked.
+      feature("ready", || ready::install(&image, &ix));
       #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
       feature("direct_calls", || route_direct_calls(&image));
       discord::install(&image);
@@ -297,7 +300,6 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
       feature("optimistic_delete", || {
          accessories::install_optimistic_delete(&image, &ix);
       });
-      feature("ready", || ready::install(&image, &ix));
    }
    #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
    feature("message_writer", || message::writer::install(&image));
@@ -393,6 +395,8 @@ fn open_gate_extras(image: &Image<'static>) {
       health::feature("notification_gate", || open_notification_gate(image));
    } else {
       health::feature("notification_gate", || close_enforced(image));
+      // Linux's webviews have no frame to order under.
+      #[cfg(target_os = "macos")]
       health::feature("webview_pages", || keep_pages_over_frame(image));
    }
 }
@@ -401,6 +405,10 @@ fn open_gate_extras(image: &Image<'static>) {
 /// without the access function and drops every message alert for a gated
 /// account, notifications and their sounds included.
 fn close_enforced(image: &Image<'static>) {
+   // Linux's access read doesn't call `enforced`, which is found by shape.
+   #[cfg(target_os = "linux")]
+   let enforced = phoenix_sigs::macos::elf_access_enforced(image);
+   #[cfg(not(target_os = "linux"))]
    let enforced = phoenix_sigs::macos::access_read(image)
       .and_then(|read| phoenix_sigs::macos::access_enforced(image, read));
    // SAFETY: as for the access function in `open_access_gate`.
@@ -414,6 +422,7 @@ fn close_enforced(image: &Image<'static>) {
 /// Keeps macOS embedded webviews above `GPUIView` so mouse clicks reach
 /// interactive modals like hCaptcha (release builds ignore
 /// `LIBDISCORD_MAC_PAGES_OVER_FRAME`).
+#[cfg(target_os = "macos")]
 fn keep_pages_over_frame(image: &Image<'static>) {
    let func = match phoenix_sigs::macos::pages_under_frame(image) {
       Ok(func) => func,

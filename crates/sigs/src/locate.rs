@@ -385,7 +385,11 @@ pub const LOCATORS: &[Locator] = &[
          ))
       },
    },
-   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   #[cfg(any(
+      target_arch = "x86_64",
+      target_os = "macos",
+      all(target_os = "linux", target_arch = "aarch64")
+   ))]
    Locator {
       name:     "settings page changed",
       families: DESKTOP,
@@ -581,7 +585,11 @@ pub const LOCATORS: &[Locator] = &[
          ))
       },
    },
-   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   #[cfg(any(
+      target_arch = "x86_64",
+      target_os = "macos",
+      all(target_os = "linux", target_arch = "aarch64")
+   ))]
    Locator {
       name:     "ready text",
       families: DESKTOP,

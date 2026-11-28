@@ -527,6 +527,7 @@ fn scan_chunk_refs(
    words: &[[u8; 4]],
    from: usize,
    to: usize,
+   veneer: &(dyn Fn(usize) -> Option<usize> + Sync),
    mut on_ref: impl FnMut(usize, usize),
 ) {
    // The last `adrp` each register got, by its instruction index.
@@ -554,11 +555,32 @@ fn scan_chunk_refs(
          && let Some(target) = target
       {
          on_ref(pc, target);
+         if matches!(decode(word, pc), Insn::Bl { .. } | Insn::B { .. })
+            && let Some(behind) = veneer(target)
+         {
+            on_ref(pc, behind);
+         }
       }
    }
 }
 
+/// Where the linker veneer at `target` jumps, on ELF builds past the 128 MB
+/// `bl` reach that put a lone `b` in front of far callees. A branch to the
+/// veneer then also counts as one to its target. Mach-O builds have none.
+fn veneer_target(image: &Image<'_>, target: usize) -> Option<usize> {
+   if image.function_starts.is_some() {
+      return None;
+   }
+   let word = u32::from_le_bytes(image.read(target, 4)?.try_into().ok()?);
+   match decode(word, target) {
+      Insn::B { target: behind } if behind != target => Some(behind),
+      _ => None,
+   }
+}
+
 fn build_ref_index(image: &Image<'_>, base: usize, max_end: usize) -> Option<Vec<u64>> {
+   let veneer = |target: usize| veneer_target(image, target);
+   let veneer: &(dyn Fn(usize) -> Option<usize> + Sync) = &veneer;
    let mut all = Vec::new();
    for segment in image.segments.iter().filter(|segment| segment.executable) {
       let words = segment.bytes.as_chunks::<4>().0;
@@ -574,7 +596,7 @@ fn build_ref_index(image: &Image<'_>, base: usize, max_end: usize) -> Option<Vec
                   let start = chunk * CHUNK_WORDS;
                   let end = (start + CHUNK_WORDS).min(words.len());
                   let mut found = Vec::new();
-                  scan_chunk_refs(segment.addr, words, start, end, |pc, target| {
+                  scan_chunk_refs(segment.addr, words, start, end, veneer, |pc, target| {
                      if target >= base
                         && target < max_end
                         && pc >= base
@@ -622,6 +644,8 @@ pub fn code_refs(image: &Image<'_>, targets: &[Range<usize>]) -> Vec<(usize, usi
          .is_some_and(|range| range.contains(target))
    };
    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+   let veneer = |target: usize| veneer_target(image, target);
+   let veneer: &(dyn Fn(usize) -> Option<usize> + Sync) = &veneer;
    let mut found = Vec::new();
    for segment in image.segments.iter().filter(|segment| segment.executable) {
       let words = segment.bytes.as_chunks::<4>().0;
@@ -633,7 +657,7 @@ pub fn code_refs(image: &Image<'_>, targets: &[Range<usize>]) -> Vec<(usize, usi
                scope.spawn(move || {
                   let to = (from + chunk).min(words.len());
                   let mut part = Vec::new();
-                  scan_chunk_refs(segment.addr, words, from, to, |pc, target| {
+                  scan_chunk_refs(segment.addr, words, from, to, veneer, |pc, target| {
                      if wanted(&target) {
                         part.push((pc, target));
                      }

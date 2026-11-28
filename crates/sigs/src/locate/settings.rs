@@ -242,6 +242,10 @@ pub struct SidebarRows {
    pub gear:          u16,
 }
 
+#[expect(
+   clippy::too_many_lines,
+   reason = "locates the row, its push and its click in one pass"
+)]
 pub fn settings_sidebar_rows(ix: &Index<'_>, page_offset: usize) -> Found<SidebarRows> {
    const ID: &[u8] = b"us-logout";
    // Pages, headers, separators and Log Out all go through the push.
@@ -283,18 +287,28 @@ pub fn settings_sidebar_rows(ix: &Index<'_>, page_offset: usize) -> Found<Sideba
          }
       })
       .ok_or("sidebar entry push copies no fixed size")?;
-   let (click_vtable, click_offset) = ix
-      .func(row)?
-      .steps()
-      .windows(2)
-      .filter_map(|pair| {
-         let Op::Addr { reg, target } = pair[0].op else {
+   // Flattened, and on arm64 ELF builds the store may trail the address by a
+   // few steps (an outlined stub's moves, or loads scheduled between).
+   let row_steps = ix.func(row)?.flat_steps();
+   let reach = if ix.isa == crate::index::Isa::Aarch64 && ix.image.function_starts.is_none() {
+      6
+   } else {
+      1
+   };
+   let (click_vtable, click_offset) = row_steps
+      .iter()
+      .enumerate()
+      .filter_map(|(at, step)| {
+         let Op::Addr { reg, target } = step.op else {
             return None;
          };
-         let (_, offset, _) = pair[1]
-            .op
-            .stored_reg()
-            .filter(|&(stored, _, size)| stored == reg && size == 8)?;
+         let offset = row_steps[at + 1..].iter().take(reach).find_map(|next| {
+            match next.op.stored_reg() {
+               Some((stored, offset, 8)) if stored == reg => Some(Some(offset)),
+               _ if next.writes & (1 << reg) != 0 => Some(None),
+               _ => None,
+            }
+         })??;
          Some((target, usize::try_from(offset).ok()?))
       })
       .next_back()
