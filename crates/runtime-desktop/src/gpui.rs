@@ -2235,9 +2235,6 @@ fn open_plugin_page(name: &str, window: *mut c_void, app: *mut c_void) {
       *PLUGIN_PAGE.lock().unwrap_or_else(PoisonError::into_inner) =
          Some(crate::modal::open_page(spec));
    }
-   if let Some(source) = phoenix_runtime::source(name) {
-      crate::modal::prime_code_editor(&source, app, window);
-   }
 }
 
 /// Shows `name`'s page again with what changed, and the cards under it.
@@ -2311,8 +2308,10 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
    let mut actions = Vec::new();
    let owned = plugin.name.clone();
    actions.push(page_button("Edit Code", false, move || {
+      // SAFETY: EditPluginCode does not access the GPUI window or app contexts.
       run(Action::EditPluginCode(owned.clone()), std::ptr::null_mut(), std::ptr::null_mut());
    }));
+   
    if plugin.state.is_on() && plugin.installed {
       let owned = plugin.name.clone();
       actions.push(page_button("Reload", false, move || {
@@ -2320,6 +2319,7 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
          refresh_plugin_page(&owned);
       }));
    }
+   
    if !plugin.state.is_on() && plugin.installed {
       let owned = plugin.name.clone();
       actions.push(ModalButton {
@@ -2327,6 +2327,7 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
          danger:   true,
          primary:  false,
          on_press: Arc::new(move || {
+            // SAFETY: UninstallPlugin does not access the GPUI window or app contexts.
             run(Action::UninstallPlugin(owned.clone()), std::ptr::null_mut(), std::ptr::null_mut());
             let page = *PLUGIN_PAGE.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(id) = page {
@@ -2335,6 +2336,7 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
          }),
       });
    }
+   
    sections.push(ModalSection::Buttons {
       title:   None,
       buttons: actions,

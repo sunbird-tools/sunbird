@@ -486,6 +486,10 @@ const SETTLE_VEL: f32 = 0.01;
 const MAX_TRANSITION_SECS: f32 = 0.45;
 const FALLBACK_TICK: Duration = Duration::from_millis(16);
 
+/// The discriminant tag used by Rust/GPUI for a heap-allocated `SharedString` (Arc<str>).
+/// This relies on the niche optimization of GPUI's `SharedString` enum for this compiler version.
+const SHARED_STRING_HEAP_TAG: u8 = 0x19;
+
 #[derive(Clone, Copy)]
 struct Transition {
    started:   Instant,
@@ -823,6 +827,9 @@ struct PageFieldState {
    entity: RawEntity,
    seen:   String,
    refill: bool,
+   /// Set by a write the field has not displayed yet, so the next read only
+   /// records the text instead of reporting it as a user edit.
+   fresh:  bool,
 }
 
 /// Page text boxes by section id, kept while Discord runs.
@@ -864,6 +871,7 @@ fn ensure_page_field(
          entity,
          seen: String::new(),
          refill: true,
+         fresh: false,
       });
    }
    Some(entity)
@@ -900,33 +908,9 @@ pub fn prime_page(spec: &PageModalSpec, app: *mut c_void, window: *mut c_void) {
          field.seen.clear();
          field.seen.push_str(initial);
          field.refill = false;
+         field.fresh = true;
       }
    }
-}
-
-/// Writes `source` into the code editor's field before it opens.
-pub fn prime_code_editor(source: &str, app: *mut c_void, window: *mut c_void) {
-   if app.is_null() || window.is_null() || FIELD_SYM.get().is_none() {
-      return;
-   }
-   // SAFETY: a GPUI callback on the main thread, outside any render.
-   let Some(entity) = (unsafe {
-      ensure_field_entity(
-         app,
-         window,
-         FieldSlot::Code,
-         "// Plugin JavaScript source...",
-      )
-   }) else {
-      return;
-   };
-   let Some(tf) = FIELD_SYM.get() else {
-      return;
-   };
-   // SAFETY: `entity` is a live field and `app` is live.
-   let field = unsafe { field_ptr(app, &entity) };
-   // SAFETY: as above.
-   unsafe { write_field_pending(tf, field, source) };
 }
 
 /// Which kept field entity a field draws: the modals' one-line and multiline
@@ -1562,15 +1546,6 @@ pub fn open_code_editor(plugin: String, initial_source: String) {
    }));
 }
 
-/// Takes the code editor's source once, before it is written to the field.
-fn take_code_editor_init() -> Option<String> {
-   let mut guard = active_modal();
-   match guard.active.as_mut() {
-      Some(ActiveModal::CodeEditor(editor)) => editor.pending_init.take(),
-      _ => None,
-   }
-}
-
 /// Opens a native GPUI single-line URL installer modal.
 pub fn open_install_url() {
    resolve_pending_choice();
@@ -2001,19 +1976,19 @@ unsafe fn write_field_pending(tf: &TextFieldSymbols, field: *mut c_void, text: &
 
 /// Drops a heap-backed `SharedString` read out of a field slot.
 unsafe fn release_shared_string(tf: &TextFieldSymbols, ss: &SharedString) {
-   if ss.tag != 0x19 || ss.ptr.is_null() {
-      return;
-   }
-   #[expect(clippy::cast_ptr_alignment, reason = "an `Arc` header is word aligned")]
-   // SAFETY: a heap `SharedString`'s `ptr` is its `ArcInner`, whose first word
-   // is the strong count.
-   let strong = unsafe { &*ss.ptr.cast::<AtomicUsize>() };
-   if strong.fetch_sub(1, Ordering::Release) == 1 {
-      std::sync::atomic::fence(Ordering::Acquire);
-      let mut ptr = ss.ptr;
-      // SAFETY: the last strong reference; `arc_drop_slow` frees it.
-      unsafe { (tf.arc_drop_slow)(&raw mut ptr) };
-   }
+    if ss.tag != SHARED_STRING_HEAP_TAG || ss.ptr.is_null() {
+        return;
+    }
+    #[expect(clippy::cast_ptr_alignment, reason = "an `Arc` header is word aligned")]
+    // SAFETY: a heap `SharedString`'s `ptr` is its `ArcInner`, whose first word
+    // is the strong count.
+    let strong = unsafe { &*ss.ptr.cast::<AtomicUsize>() };
+    if strong.fetch_sub(1, Ordering::Release) == 1 {
+        std::sync::atomic::fence(Ordering::Acquire);
+        let mut ptr = ss.ptr;
+        // SAFETY: the last strong reference; `arc_drop_slow` frees it.
+        unsafe { (tf.arc_drop_slow)(&raw mut ptr) };
+    }
 }
 
 /// A new single-line or multi-line `Entity<FieldState>` showing
@@ -2060,29 +2035,31 @@ unsafe fn new_field_entity(
 }
 
 unsafe fn read_field_text(app: *mut c_void, entity: &RawEntity) -> Option<String> {
-   let tf = FIELD_SYM.get()?;
-   if app.is_null() {
-      return None;
-   }
-   // SAFETY: invoked synchronously from a GPUI button callback with live `app`.
-   unsafe {
-      let field = (tf.entity_map_get)(
-         app.cast::<u8>()
-            .add(tf.layout.app_entities)
-            .cast::<c_void>(),
-         entity.id_lo,
-         entity.id_hi,
-      );
-      if field.is_null() || field as usize == 1 {
-         return None;
-      }
-      let mut ss = MaybeUninit::<SharedString>::uninit();
-      (tf.text_get)(ss.as_mut_ptr(), field, app);
-      let ss = ss.assume_init();
-      let result = decode_shared_string(&ss);
-      release_shared_string(tf, &ss);
-      Some(result)
-   }
+    let tf = FIELD_SYM.get()?;
+    if app.is_null() {
+        return None;
+    }
+    let field = unsafe {
+        (tf.entity_map_get)(
+            app.cast::<u8>()
+                .add(tf.layout.app_entities)
+                .cast::<c_void>(),
+            entity.id_lo,
+            entity.id_hi,
+        )
+    };
+    if field.is_null() || field as usize == 1 {
+        return None;
+    }
+    let mut ss = MaybeUninit::<SharedString>::uninit();
+    unsafe { (tf.text_get)(ss.as_mut_ptr(), field, app) };
+    let ss = unsafe { ss.assume_init() };
+    
+    let result = unsafe { decode_shared_string(&ss) };
+    
+    unsafe { release_shared_string(tf, &ss) };
+    
+    Some(result)
 }
 
 unsafe fn decode_shared_string(ss: &SharedString) -> String {
@@ -2671,14 +2648,27 @@ unsafe fn page_field(
       on_change,
    } = *spec;
    let tf = FIELD_SYM.get()?;
-   if !PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner).contains_key(id) {
-      // SAFETY: as this function's.
+
+   let needs_init = {
+      let fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      !fields.contains_key(id)
+   };
+
+   if needs_init {
+      // SAFETY: `app` and `window` are live GPUI handles.
       let entity = unsafe { new_field_entity(app, window, multiline, "") }?;
-      PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner).insert(
+      let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      fields.insert(
          id.to_owned(),
-         PageFieldState { entity, seen: String::new(), refill: true },
+         PageFieldState {
+            entity,
+            seen: String::new(),
+            refill: true,
+            fresh: false,
+         },
       );
    }
+
    let (entity, refill) = {
       let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
       let field = fields.get_mut(id)?;
@@ -2686,9 +2676,12 @@ unsafe fn page_field(
       if refill {
          field.refill = false;
          field.seen.clear();
+         field.fresh = true;
       }
-      (field.entity, refill)
+      let entity = field.entity;
+      (entity, refill)
    };
+
    if refill {
       // SAFETY: `app` is live and the field's entity is not leased mid-render.
       let field = unsafe { field_ptr(app, &entity) };
@@ -2696,17 +2689,28 @@ unsafe fn page_field(
       unsafe { write_field_pending(tf, field, initial) };
       return Some(unsafe { page_text_input(tf, entity, multiline) });
    }
+
    // SAFETY: as above.
    let text = unsafe { read_field_text(app, &entity) }.unwrap_or_default();
-   let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
-   if let Some(field) = fields.get_mut(id)
-      && text != field.seen
-   {
-      field.seen.clone_from(&text);
+
+   let changed = {
+      let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      let Some(field) = fields.get_mut(id) else {
+         return Some(unsafe { page_text_input(tf, entity, multiline) });
+      };
+      let fresh = std::mem::take(&mut field.fresh);
+      let changed = !fresh && text != field.seen;
+      if fresh || changed {
+         field.seen.clone_from(&text);
+      }
+      changed
+   };
+
+   if changed {
       let on_change = Arc::clone(on_change);
       std::thread::spawn(move || on_change(text));
    }
-   drop(fields);
+
    // SAFETY: builds a hosted `TextInput`, or a `TextArea` of
    // [`SETTING_ROWS`] rows, from `&Entity<FieldState>` in a buffer that fits
    // it, and moves it into an `AnyElement`.
@@ -2798,11 +2802,11 @@ fn build_overlay(window: *mut c_void, app: *mut c_void) -> Option<RawDiv> {
                   )
                }
             {
-               if let Some(init) = take_code_editor_init() {
+               if let Some(init) = &ed.pending_init {
                   // SAFETY: `app` is live and `ent` is its field.
                   let field = unsafe { field_ptr(app, &ent) };
                   // SAFETY: `field` is the live `FieldState` behind `ent`.
-                  unsafe { write_field_pending(tf, field, &init) };
+                  unsafe { write_field_pending(tf, field, init) };
                }
                // SAFETY: constructs hosted `TextArea` from
                // `&Entity<FieldState>` in a buffer that fits it and converts to
@@ -2886,6 +2890,12 @@ fn build_overlay(window: *mut c_void, app: *mut c_void) -> Option<RawDiv> {
                   })
                }
             {
+               if let Some(init) = &inst.pending_init {
+                  // SAFETY: `app` is live and `ent` is its field.
+                  let field = unsafe { field_ptr(app, &ent) };
+                  // SAFETY: `field` is the live `FieldState` behind `ent`.
+                  unsafe { write_field_pending(tf, field, init) };
+               }
                // SAFETY: constructs hosted `TextInput` from `&Entity<FieldState>`
                // in a buffer that fits it and converts to `AnyElement`.
                let mut ti_any = unsafe {
