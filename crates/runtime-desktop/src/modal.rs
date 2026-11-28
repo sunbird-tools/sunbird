@@ -365,7 +365,7 @@ type CxNewFieldFn =
 type EntityMapGetFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> *mut c_void;
 type TextGetFn =
    unsafe extern "C" fn(*mut SharedString, *const c_void, *const c_void) -> *mut SharedString;
-type ArcDropSlowFn = unsafe extern "C" fn(*mut *const u8);
+type ArcDropSlowFn = unsafe extern "C" fn(*const u8, usize);
 type TextInputNewFn =
    unsafe extern "C" fn(*mut RawTextInput, *const RawEntity) -> *mut RawTextInput;
 type TextInputIntoAnyFn =
@@ -1981,9 +1981,10 @@ unsafe fn release_shared_string(tf: &TextFieldSymbols, ss: &SharedString) {
     let strong = unsafe { &*ss.ptr.cast::<AtomicUsize>() };
     if strong.fetch_sub(1, Ordering::Release) == 1 {
         std::sync::atomic::fence(Ordering::Acquire);
-        let mut ptr = ss.ptr;
-        // SAFETY: the last strong reference; `arc_drop_slow` frees it.
-        unsafe { (tf.arc_drop_slow)(&raw mut ptr) };
+        // SAFETY: the last strong reference; `arc_drop_slow` is
+        // `Arc<str>::drop_slow`, which takes the `ArcInner<str>` fat pointer
+        // (payload pointer + payload length) and frees the allocation.
+        unsafe { (tf.arc_drop_slow)(ss.ptr, ss.len) };
     }
 }
 
@@ -2035,6 +2036,8 @@ unsafe fn read_field_text(app: *mut c_void, entity: &RawEntity) -> Option<String
     if app.is_null() {
         return None;
     }
+    // SAFETY: called on the GPUI main thread with a live `app`, and `entity`
+    // is an `Entity<FieldState>` still mapped in `app`'s entity map.
     let field = unsafe {
         (tf.entity_map_get)(
             app.cast::<u8>()
@@ -2047,12 +2050,18 @@ unsafe fn read_field_text(app: *mut c_void, entity: &RawEntity) -> Option<String
     if field.is_null() || field as usize == 1 {
         return None;
     }
+    // SAFETY: `field` is a live `FieldState`; `text_get` writes an
+    // initialised `SharedString` through the out-pointer on success.
     let mut ss = MaybeUninit::<SharedString>::uninit();
     unsafe { (tf.text_get)(ss.as_mut_ptr(), field, app) };
+    // SAFETY: `text_get` returned normally, so `ss` is initialised.
     let ss = unsafe { ss.assume_init() };
     
+    // SAFETY: `ss` is a live `SharedString` for the duration of the borrow.
     let result = unsafe { decode_shared_string(&ss) };
     
+    // SAFETY: `ss` is still the value `text_get` produced and is released
+    // exactly once here.
     unsafe { release_shared_string(tf, &ss) };
     
     Some(result)
@@ -2721,17 +2730,24 @@ unsafe fn page_text_input(
    let mut any = MaybeUninit::<RawAnyElement>::uninit();
    if multiline {
       let mut ta = RawTextArea::zeroed();
+      // SAFETY: `entity` is a live handle and `ta` is a zeroed local the
+      // constructor writes an initialised `RawTextArea` into.
       unsafe { (tf.text_area_new)(&raw mut ta, &raw const entity) };
       if let Some(rows) = tf.layout.text_area_rows {
          ta.put(rows, [1u8, SETTING_ROWS]);
          ta.put(rows + 2, [1u8, SETTING_ROWS]);
       }
+      // SAFETY: `ta` is initialised above; `into_any` moves it into `any`.
       unsafe { (tf.text_area_into_any)(any.as_mut_ptr(), &raw mut ta) };
    } else {
       let mut ti = RawTextInput::zeroed();
+      // SAFETY: `entity` is a live handle and `ti` is a zeroed local the
+      // constructor writes an initialised `RawTextInput` into.
       unsafe { (tf.text_input_new)(&raw mut ti, &raw const entity) };
+      // SAFETY: `ti` is initialised above; `into_any` moves it into `any`.
       unsafe { (tf.text_input_into_any)(any.as_mut_ptr(), &raw mut ti) };
    }
+   // SAFETY: whichever branch ran wrote an initialised `RawAnyElement` into `any`.
    unsafe { any.assume_init() }
 }
 
