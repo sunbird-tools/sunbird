@@ -38,12 +38,27 @@ const RIGHT: u8 = 3;
 const PRESS_WINDOW: Duration = Duration::from_secs(2);
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+/// The message whose menu a double click pressed, and when: Discord builds a
+/// menu again on each frame it draws, so it stays empty for a moment after.
+static PRESSED: Mutex<Option<(u64, Instant)>> = Mutex::new(None);
+const HIDE_FOR: Duration = Duration::from_secs(1);
 static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 
 struct Pending {
    message: u64,
    item:    String,
    at:      Instant,
+   /// The window and app GPUI handed the click, which the menu item's
+   /// handler gets.
+   window:  usize,
+   app:     usize,
+}
+
+/// A menu item to press, with the window and app to press it with.
+pub struct Press {
+   pub item:   String,
+   pub window: *mut c_void,
+   pub app:    *mut c_void,
 }
 
 static ROW_PRESS_VTBL: RcFnVtbl = RcFnVtbl {
@@ -86,7 +101,10 @@ pub fn wrap_row(sret: *mut RawAnyElement, message: u64) {
 
 /// The menu item to press on `message`'s menu, when a double click asked for
 /// one just now.
-pub fn take_press(message: u64) -> Option<String> {
+///
+/// The builder's own arguments are no window, which crashed Discord when the
+/// handler wrote to one, so the press carries the click's.
+pub fn take_press(message: u64) -> Option<Press> {
    let mut pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
    if pending
       .as_ref()
@@ -94,7 +112,26 @@ pub fn take_press(message: u64) -> Option<String> {
    {
       return None;
    }
-   pending.take().map(|held| held.item)
+   pending.take().map(|held| {
+      Press {
+         item:   held.item,
+         window: held.window as *mut c_void,
+         app:    held.app as *mut c_void,
+      }
+   })
+}
+
+/// Notes that a double click pressed `message`'s menu.
+pub fn pressed(message: u64) {
+   *PRESSED.lock().unwrap_or_else(PoisonError::into_inner) = Some((message, Instant::now()));
+}
+
+/// Whether `message`'s menu was pressed just now, so it should draw nothing.
+pub fn hidden(message: u64) -> bool {
+   PRESSED
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner)
+      .is_some_and(|(held, at)| held == message && at.elapsed() < HIDE_FOR)
 }
 
 /// Whether a press waits for a menu.
@@ -103,6 +140,126 @@ pub fn pending() -> bool {
       .lock()
       .unwrap_or_else(PoisonError::into_inner)
       .is_some()
+}
+
+/// The chat pane's Reply and Edit, run straight from a double click with the
+/// pane the row was drawn in, as the menu's items run them.
+pub mod pane {
+   use std::{
+      collections::HashMap,
+      ffi::c_void,
+      sync::{
+         LazyLock,
+         Mutex,
+         OnceLock,
+         PoisonError,
+      },
+   };
+
+   use phoenix_sigs::{
+      index::Index,
+      locate::chat::{
+         self,
+         PaneCommands,
+      },
+   };
+
+   /// `WeakEntity<ChatPaneView>`: its id, ref counts and type.
+   type Handle = [u8; HANDLE];
+   const HANDLE: usize = 32;
+   const TYPE_AT: usize = 16;
+   /// How much of the list's frame to search for the pane's handle.
+   const FRAME: usize = 0x1000;
+   const MAX_ROWS: usize = 4096;
+
+   type CommandFn =
+      unsafe extern "C" fn(*const Handle, *const *mut u8, *const u64, *const c_void) -> usize;
+
+   static COMMANDS: OnceLock<PaneCommands> = OnceLock::new();
+   /// The pane each drawn message's row belongs to.
+   static PANES: LazyLock<Mutex<HashMap<u64, Handle>>> =
+      LazyLock::new(|| Mutex::new(HashMap::new()));
+
+   pub fn install(ix: &Index<'_>) {
+      match chat::pane_commands(ix) {
+         Ok(found) => {
+            let _ = COMMANDS.set(found);
+         },
+         Err(err) => log::warn!("double click: {err}, replies and edits open the menu"),
+      }
+   }
+
+   /// Notes the pane drawing `message`'s row, from `frames`: arguments the row
+   /// render is handed that point into its list's stack frame, which holds the
+   /// pane's handle (0xe0 past the third argument on Windows, 0xb70 on Linux).
+   /// Only a handle of the pane's own type counts, so a candidate that is no
+   /// pointer at all finds nothing.
+   pub fn note(message: u64, frames: &[usize]) {
+      let Some(commands) = COMMANDS.get() else {
+         return;
+      };
+      if message == 0 {
+         return;
+      }
+      let mut panes = PANES.lock().unwrap_or_else(PoisonError::into_inner);
+      if panes.contains_key(&message) {
+         return;
+      }
+      let found = |frame: usize| -> Option<Handle> {
+         // A checked read, since how far the frame reaches is not known.
+         let bytes = phoenix_hook::x86::read_memory(frame, FRAME)?;
+         let at = bytes
+            .windows(16)
+            .position(|window| window == commands.pane_type)?
+            .checked_sub(TYPE_AT)?;
+         Handle::try_from(bytes.get(at..at + HANDLE)?).ok()
+      };
+      let Some(handle) = frames
+         .iter()
+         .filter(|&&frame| frame != 0)
+         .find_map(|&frame| found(frame))
+      else {
+         return;
+      };
+      if panes.len() >= MAX_ROWS {
+         panes.clear();
+      }
+      panes.insert(message, handle);
+   }
+   /// Runs `item` (`reply` or `edit`) on `message` in its row's pane, with the
+   /// click's window and app. Whether it ran.
+   pub fn run(item: &str, message: u64, window: *const c_void, app: *mut u8) -> bool {
+      let Some(commands) = COMMANDS.get() else {
+         return false;
+      };
+      let handler = match item {
+         "reply" => commands.reply,
+         "edit" => commands.edit,
+         _ => return false,
+      };
+      let Some(handle) = PANES
+         .lock()
+         .unwrap_or_else(PoisonError::into_inner)
+         .get(&message)
+         .copied()
+      else {
+         return false;
+      };
+      // SAFETY: the handler the menu item calls, `(pane, &app, &message,
+      // window)`. It upgrades the pane handle and does nothing once the pane
+      // is gone; `handle` is a copy of the row's, which needs no count of its
+      // own while the call holds its upgrade.
+      unsafe {
+         let handler = std::mem::transmute::<usize, CommandFn>(handler);
+         handler(
+            &raw const handle,
+            &raw const app,
+            &raw const message,
+            window,
+         );
+      }
+      true
+   }
 }
 
 /// Rust ABI like the `Fn::call` slot it fills, see `modal::scrim_press`. The
@@ -114,7 +271,7 @@ unsafe fn row_press(
    phase: u8,
    hitbox: *const c_void,
    window: *const c_void,
-   _app: *mut u8,
+   app: *mut u8,
 ) {
    let _ = std::panic::catch_unwind(|| {
       if phase != modal::PHASE_CAPTURE || !modal::hovered(hitbox, window) {
@@ -136,10 +293,15 @@ unsafe fn row_press(
       else {
          return;
       };
+      if pane::run(&item, message, window, app) {
+         return;
+      }
       *PENDING.lock().unwrap_or_else(PoisonError::into_inner) = Some(Pending {
          message,
          item,
          at: Instant::now(),
+         window: window as usize,
+         app: app as usize,
       });
       // SAFETY: the event GPUI hands every listener in turn, on this stack.
       unsafe { event.add(BUTTON).write(RIGHT) };

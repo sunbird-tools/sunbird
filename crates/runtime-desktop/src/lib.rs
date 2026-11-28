@@ -245,6 +245,7 @@ pub fn prepare() -> Result<(), Error> {
    health::record("notices", health::Kind::Feature, modal.clone());
    critical("modal", modal);
    feature("context_menu", || context_menu::install(&image, &ix));
+   feature("double_click", || double_click::pane::install(&ix));
    // Before accessories hooks `MessageRow::render`, whose prologue the header
    // locators check.
    let header = X86_CODE.then(|| headers::locate(&image, &ix));

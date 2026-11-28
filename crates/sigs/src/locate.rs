@@ -6,6 +6,8 @@ pub mod call_idle;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod channel;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+pub mod chat;
+#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod clickable;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod composer;
@@ -138,6 +140,12 @@ pub const LOCATORS: &[Locator] = &[
       name:     "menu submenu",
       families: DESKTOP,
       run:      |ix| menu::submenu(ix).map(|layout| format!("{layout:x?}")),
+   },
+   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   Locator {
+      name:     "pane commands",
+      families: DESKTOP,
+      run:      |ix| chat::pane_commands(ix).map(|found| format!("{found:x?}")),
    },
    #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
    Locator {
