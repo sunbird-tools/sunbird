@@ -1689,7 +1689,7 @@ fn set_dismiss(found: &Dismiss, interactivity: usize) {
 
 /// Fallback on macOS if native modal resolution fails: still resolve
 /// `mouse_down` so `rowDoubleTap` keeps working.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 fn install_mouse_down_fallback(image: &Image<'static>, div: &desktop::DivLayout) {
    match phoenix_sigs::macos::mouse_down(image, div) {
       Ok(found) => {
@@ -1723,7 +1723,7 @@ pub fn install(image: &Image<'static>) {
       Ok(m) => m,
       Err(err) => {
          log::warn!("desktop modal: {err}, native modals disabled");
-         #[cfg(target_os = "macos")]
+         #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
          install_mouse_down_fallback(image, &gpui_layout.div);
          return;
       },

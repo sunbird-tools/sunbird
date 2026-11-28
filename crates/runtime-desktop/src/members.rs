@@ -194,7 +194,7 @@ pub fn install(image: &Image<'static>) {
    // Without it, decorations show their text instead of icons.
    gpui::locate_svg(image);
    if !crate::X86_CODE {
-      #[cfg(target_os = "macos")]
+      #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
       arm64::install(image);
       return;
    }
@@ -361,7 +361,7 @@ fn lines_for(user_id: u64) -> Option<Vec<gpui::Piece>> {
    (!lines.is_empty()).then_some(lines)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 mod arm64 {
    use std::cell::Cell;
 
