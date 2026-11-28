@@ -61,9 +61,14 @@ pub struct SharedString {
 }
 
 impl SharedString {
+   /// `Static(&'static str)` discriminant.
+   pub const STATIC: u8 = 0x18;
+   /// `Arc<str>` discriminant.
+   pub const ARC: u8 = 0x19;
+
    pub const fn from_static(s: &'static str) -> Self {
       Self {
-         tag:  0x18,
+         tag:  Self::STATIC,
          _pad: [0; 7],
          ptr:  s.as_ptr(),
          len:  s.len(),
@@ -88,7 +93,7 @@ impl SharedString {
          ptr::copy_nonoverlapping(s.as_ptr(), inner.add(16), s.len());
       }
       Self {
-         tag:  0x19,
+         tag:  Self::ARC,
          _pad: [0; 7],
          ptr:  inner.cast_const(),
          len:  s.len(),
@@ -267,14 +272,14 @@ unsafe fn element_press(
    phase: u8,
    hitbox: *const c_void,
    window: *const c_void,
-   _app: *mut u8,
+   app: *mut u8,
 ) {
    let _ = std::panic::catch_unwind(|| {
       if phase == crate::modal::PHASE_BUBBLE
          && crate::modal::hovered(hitbox, window)
          && let Some(action) = lookup_action((data as u64).wrapping_sub(1))
       {
-         run(action);
+         run(action, window.cast_mut().cast(), app.cast());
          crate::modal::force_redraw();
       }
    });
@@ -464,8 +469,8 @@ unsafe fn switch_callback(
 unsafe extern "C" fn button_callback(
    self_ptr: *const u64,
    _event: *const c_void,
-   _window: *mut c_void,
-   _app: *mut c_void,
+   window: *mut c_void,
+   app: *mut c_void,
 ) {
    if self_ptr.is_null() {
       return;
@@ -475,13 +480,14 @@ unsafe extern "C" fn button_callback(
       // Fn>`.
       let id = unsafe { *self_ptr };
       if let Some(action) = lookup_action(id) {
-         run(action);
+         run(action, window, app);
       }
    });
 }
 
-/// Runs a pressed button's or element's action.
-fn run(action: Action) {
+/// Runs a pressed button's or element's action. `window` and `app` are the
+/// live GPUI handles from the callback.
+fn run(action: Action, window: *mut c_void, app: *mut c_void) {
    let _ = std::panic::catch_unwind(move || {
       match action {
          Action::SetTab(tab) => {
@@ -506,7 +512,7 @@ fn run(action: Action) {
             let mut ui = UI_STATE.lock().unwrap_or_else(PoisonError::into_inner);
             ui.catalog_filter_open = !ui.catalog_filter_open;
          },
-         Action::OpenPlugin(name) => open_plugin_page(&name),
+         Action::OpenPlugin(name) => open_plugin_page(&name, window, app),
          Action::ReloadAll => phoenix_runtime::reload_all(),
          Action::OpenDevTools => phoenix_ui_desktop::open_devtools(),
          Action::CheckUpdates => update::check_now(),
@@ -2248,9 +2254,10 @@ fn catalog_card(b: &Builder, item: &Listed, installed: bool) -> RawDiv {
 /// it.
 static PLUGIN_PAGE: Mutex<Option<u64>> = Mutex::new(None);
 
-fn open_plugin_page(name: &str) {
+fn open_plugin_page(name: &str, window: *mut c_void, app: *mut c_void) {
    crate::modal::refill_page_fields();
    if let Some(spec) = plugin_page(name) {
+      crate::modal::prime_page(&spec, app, window);
       *PLUGIN_PAGE.lock().unwrap_or_else(PoisonError::into_inner) =
          Some(crate::modal::open_page(spec));
    }
@@ -2327,8 +2334,10 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
    let mut actions = Vec::new();
    let owned = plugin.name.clone();
    actions.push(page_button("Edit Code", false, move || {
-      run(Action::EditPluginCode(owned.clone()));
+      // SAFETY: EditPluginCode does not access the GPUI window or app contexts.
+      run(Action::EditPluginCode(owned.clone()), std::ptr::null_mut(), std::ptr::null_mut());
    }));
+   
    if plugin.state.is_on() && plugin.installed {
       let owned = plugin.name.clone();
       actions.push(page_button("Reload", false, move || {
@@ -2336,6 +2345,7 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
          refresh_plugin_page(&owned);
       }));
    }
+   
    if !plugin.state.is_on() && plugin.installed {
       let owned = plugin.name.clone();
       actions.push(ModalButton {
@@ -2343,7 +2353,8 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
          danger:   true,
          primary:  false,
          on_press: Arc::new(move || {
-            run(Action::UninstallPlugin(owned.clone()));
+            // SAFETY: UninstallPlugin does not access the GPUI window or app contexts.
+            run(Action::UninstallPlugin(owned.clone()), std::ptr::null_mut(), std::ptr::null_mut());
             let page = *PLUGIN_PAGE.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(id) = page {
                crate::modal::close_page(id);
@@ -2351,6 +2362,7 @@ fn plugin_page(name: &str) -> Option<PageModalSpec> {
          }),
       });
    }
+   
    sections.push(ModalSection::Buttons {
       title:   None,
       buttons: actions,

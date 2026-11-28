@@ -336,12 +336,6 @@ struct RawEntity {
 }
 const _: () = assert!(size_of::<RawEntity>() == layout::ENTITY);
 
-#[repr(C, align(8))]
-struct RawContext {
-   app:  *mut c_void,
-   weak: RawEntity,
-}
-
 #[repr(C)]
 struct RawVecAny {
    cap: usize,
@@ -370,20 +364,9 @@ type DivIdFn = unsafe extern "C" fn(*mut RawDiv, *mut RawDiv, *const u8, usize) 
 type CxNewFieldFn =
    unsafe extern "C" fn(*mut RawEntity, *mut c_void, *mut c_void) -> *mut RawEntity;
 type EntityMapGetFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> *mut c_void;
-type EntityDowngradeFn = unsafe extern "C" fn(*mut RawEntity, *const RawEntity) -> *mut RawEntity;
-type WeakDropFn = unsafe extern "C" fn(*mut c_void);
 type TextGetFn =
    unsafe extern "C" fn(*mut SharedString, *const c_void, *const c_void) -> *mut SharedString;
-type SetValueFn = unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut c_void, *mut c_void);
-type UpdateEntityDynFn = unsafe extern "C" fn(
-   *mut c_void,
-   *const RawEntity,
-   *const u8,
-   usize,
-   *mut c_void,
-   *const RcFnVtbl,
-);
-type ArcDropSlowFn = unsafe extern "C" fn(*mut *const u8);
+type ArcDropSlowFn = unsafe extern "C" fn(*const u8, usize);
 type TextInputNewFn =
    unsafe extern "C" fn(*mut RawTextInput, *const RawEntity) -> *mut RawTextInput;
 type TextInputIntoAnyFn =
@@ -457,11 +440,7 @@ struct TextFieldSymbols {
    cx_new_single:       CxNewFieldFn,
    cx_new_multiline:    CxNewFieldFn,
    entity_map_get:      EntityMapGetFn,
-   entity_downgrade:    EntityDowngradeFn,
-   weak_drop:           WeakDropFn,
    text_get:            TextGetFn,
-   set_value:           SetValueFn,
-   update_entity_dyn:   UpdateEntityDynFn,
    arc_drop_slow:       ArcDropSlowFn,
    text_input_new:      TextInputNewFn,
    text_input_into_any: TextInputIntoAnyFn,
@@ -873,6 +852,9 @@ struct PageFieldState {
    entity: RawEntity,
    seen:   String,
    refill: bool,
+   /// Set by a write the field has not displayed yet, so the next read only
+   /// records the text instead of reporting it as a user edit.
+   fresh:  bool,
 }
 
 /// Page text boxes by section id, kept while Discord runs.
@@ -888,6 +870,71 @@ pub fn refill_page_fields() {
       .values_mut()
    {
       field.refill = true;
+   }
+}
+
+/// Ensures page field `id` has an entity, returning it.
+fn ensure_page_field(
+   app: *mut c_void,
+   window: *mut c_void,
+   id: &str,
+   multiline: bool,
+) -> Option<RawEntity> {
+   let existing = PAGE_FIELDS
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner)
+      .get(id)
+      .map(|field| field.entity);
+   if let Some(entity) = existing {
+      return Some(entity);
+   }
+   // SAFETY: called from a GPUI callback with live `app` and `window`.
+   let entity = unsafe { new_field_entity(app, window, multiline, "") }?;
+   {
+      let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      fields.entry(id.to_owned()).or_insert(PageFieldState {
+         entity,
+         seen: String::new(),
+         refill: true,
+         fresh: false,
+      });
+   }
+   Some(entity)
+}
+
+/// Writes every page field's `initial` value before the page opens.
+pub fn prime_page(spec: &PageModalSpec, app: *mut c_void, window: *mut c_void) {
+   if app.is_null() || window.is_null() {
+      return;
+   }
+   let Some(tf) = FIELD_SYM.get() else {
+      return;
+   };
+   for section in &spec.sections {
+      let ModalSection::Field {
+         id,
+         initial,
+         multiline,
+         ..
+      } = section
+      else {
+         continue;
+      };
+      let Some(entity) = ensure_page_field(app, window, id, *multiline) else {
+         continue;
+      };
+      // SAFETY: a GPUI callback on the main thread, outside any render, with
+      // live `app` and `window`.
+      let field = unsafe { field_ptr(app, &entity) };
+      // SAFETY: `field` is the live `FieldState` behind `entity`.
+      unsafe { write_field_pending(tf, field, initial) };
+      let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      if let Some(field) = fields.get_mut(id) {
+         field.seen.clear();
+         field.seen.push_str(initial);
+         field.refill = false;
+         field.fresh = true;
+      }
    }
 }
 
@@ -1238,68 +1285,6 @@ pub fn listen_mouse_down(div: &mut RawDiv, data: *mut u8, vtbl: &'static RcFnVtb
       );
    }
    true
-}
-
-#[repr(C)]
-struct SetValueEnv {
-   entity:   *const RawEntity,
-   text_ptr: *const u8,
-   text_len: usize,
-   tf:       *const TextFieldSymbols,
-}
-
-static SET_VALUE_VTBL: RcFnVtbl = RcFnVtbl {
-   drop_in_place: ptr::null(),
-   size:          size_of::<SetValueEnv>(),
-   align:         align_of::<SetValueEnv>(),
-   call_once:     set_value_trampoline as *const c_void,
-   call_mut:      set_value_trampoline as *const c_void,
-   call:          set_value_trampoline as *const c_void,
-   extra:         ptr::null(),
-};
-
-unsafe extern "C" fn set_value_trampoline(
-   env: *mut SetValueEnv,
-   field: *mut c_void,
-   _any_vtbl: *const c_void,
-   app: *mut c_void,
-) {
-   if env.is_null() || field.is_null() || app.is_null() {
-      return;
-   }
-   let _ = std::panic::catch_unwind(|| {
-      // SAFETY: called synchronously from `App::update_entity_dyn` on the GPUI
-      // main thread with valid `env`, leased `field`, and `app`.
-      unsafe {
-         let env_ref = &*env;
-         let tf = &*env_ref.tf;
-         let mut ctx = MaybeUninit::<RawContext>::uninit();
-         let ctx_ptr = ctx.as_mut_ptr();
-         (*ctx_ptr).app = app;
-         (tf.entity_downgrade)(&raw mut (*ctx_ptr).weak, env_ref.entity);
-         let mut ctx = ctx.assume_init();
-         // Discord passes a non-null dangling pointer (`1`) for empty slices.
-         let ptr = if env_ref.text_len == 0 {
-            ptr::dangling()
-         } else {
-            env_ref.text_ptr
-         };
-         (tf.set_value)(
-            field,
-            ptr,
-            env_ref.text_len,
-            ptr::null_mut(),
-            (&raw mut ctx).cast::<c_void>(),
-         );
-         // `weak_drop` takes the `Weak` inside the `WeakEntity`, as Discord's
-         // own `cx.new` drops its context.
-         let weak_slot = (&raw mut ctx.weak)
-            .cast::<u8>()
-            .add(tf.layout.weak_ptr)
-            .cast::<c_void>();
-         (tf.weak_drop)(weak_slot);
-      }
-   });
 }
 
 /// `Modal::on_close` invokes `Fn::call(&self, window, cx)` — 3 arguments, no
@@ -1883,7 +1868,6 @@ pub fn install(image: &Image<'static>) {
          let wrapped = (|| -> Result<TextFieldSymbols, &'static str> {
             let cx_new_single = sret_wrap(tf.cx_new_single)?;
             let cx_new_multiline = sret_wrap(tf.cx_new_multiline)?;
-            let entity_downgrade = sret_wrap(tf.entity_downgrade)?;
             let text_get = sret_wrap(tf.text_get)?;
             let text_input_new = sret_wrap(tf.text_input_new)?;
             let text_input_into_any = sret_wrap(tf.text_input_into_any)?;
@@ -1897,15 +1881,7 @@ pub fn install(image: &Image<'static>) {
                   entity_map_get:      std::mem::transmute::<usize, EntityMapGetFn>(
                      tf.entity_map_get,
                   ),
-                  entity_downgrade:    std::mem::transmute::<usize, EntityDowngradeFn>(
-                     entity_downgrade,
-                  ),
-                  weak_drop:           std::mem::transmute::<usize, WeakDropFn>(tf.weak_drop),
                   text_get:            std::mem::transmute::<usize, TextGetFn>(text_get),
-                  set_value:           std::mem::transmute::<usize, SetValueFn>(tf.set_value),
-                  update_entity_dyn:   std::mem::transmute::<usize, UpdateEntityDynFn>(
-                     tf.update_entity_dyn,
-                  ),
                   arc_drop_slow:       std::mem::transmute::<usize, ArcDropSlowFn>(
                      tf.arc_drop_slow,
                   ),
@@ -2077,6 +2053,61 @@ unsafe fn ensure_field_entity(
    Some(ent)
 }
 
+/// The live `FieldState` behind `entity`, or null.
+unsafe fn field_ptr(app: *mut c_void, entity: &RawEntity) -> *mut c_void {
+   let Some(tf) = FIELD_SYM.get() else {
+      return ptr::null_mut();
+   };
+   if app.is_null() {
+      return ptr::null_mut();
+   }
+   // SAFETY: `app` is live and the entity id came from it.
+   unsafe {
+      (tf.entity_map_get)(
+         app.cast::<u8>()
+            .add(tf.layout.app_entities)
+            .cast::<c_void>(),
+         entity.id_lo,
+         entity.id_hi,
+      )
+   }
+}
+
+/// Writes `text` into the field's pending-value slot, which its `TextInput`
+/// applies.
+unsafe fn write_field_pending(tf: &TextFieldSymbols, field: *mut c_void, text: &str) {
+   if field.is_null() || field as usize == 1 {
+      return;
+   }
+   // SAFETY: `field` is a live `FieldState` and `pending_value` is in bounds.
+   #[expect(clippy::cast_ptr_alignment, reason = "a `FieldState` slot is word aligned")]
+   let slot = unsafe { field.cast::<u8>().add(tf.layout.pending_value) }.cast::<SharedString>();
+   // SAFETY: `slot` is a live `Option<SharedString>`; `0xff` marks `None`.
+   let previous = unsafe { slot.read_unaligned() };
+   // SAFETY: writing the new value into the same slot.
+   unsafe { slot.write_unaligned(SharedString::from_str(text)) };
+   // SAFETY: `previous` is either `None` or the value just replaced.
+   unsafe { release_shared_string(tf, &previous) };
+}
+
+/// Drops a heap-backed `SharedString` read out of a field slot.
+unsafe fn release_shared_string(tf: &TextFieldSymbols, ss: &SharedString) {
+    if ss.tag != SharedString::ARC || ss.ptr.is_null() {
+        return;
+    }
+    #[expect(clippy::cast_ptr_alignment, reason = "an `Arc` header is word aligned")]
+    // SAFETY: a heap `SharedString`'s `ptr` is its `ArcInner`, whose first word
+    // is the strong count.
+    let strong = unsafe { &*ss.ptr.cast::<AtomicUsize>() };
+    if strong.fetch_sub(1, Ordering::Release) == 1 {
+        std::sync::atomic::fence(Ordering::Acquire);
+        // SAFETY: the last strong reference; `arc_drop_slow` is
+        // `Arc<str>::drop_slow`, which takes the `ArcInner<str>` fat pointer
+        // (payload pointer + payload length) and frees the allocation.
+        unsafe { (tf.arc_drop_slow)(ss.ptr, ss.len) };
+    }
+}
+
 /// A new single-line or multi-line `Entity<FieldState>` showing
 /// `placeholder` while empty.
 unsafe fn new_field_entity(
@@ -2106,7 +2137,7 @@ unsafe fn new_field_entity(
          ent.id_lo,
          ent.id_hi,
       );
-      if !field.is_null() {
+      if !field.is_null() && field as usize != 1 {
          for slot in tf.layout.placeholders {
             field
                .cast::<u8>()
@@ -2120,76 +2151,51 @@ unsafe fn new_field_entity(
    Some(ent)
 }
 
-unsafe fn set_field_text(app: *mut c_void, entity: &RawEntity, text: &str) {
-   let Some(tf) = FIELD_SYM.get() else {
-      return;
-   };
-   if app.is_null() {
-      return;
-   }
-   let mut env = SetValueEnv {
-      entity:   ptr::from_ref(entity),
-      text_ptr: text.as_ptr(),
-      text_len: text.len(),
-      tf:       ptr::from_ref(tf),
-   };
-   // SAFETY: `update_entity_dyn` leases `FieldState`, calls
-   // `set_value_trampoline` synchronously on this stack frame, ends the lease,
-   // and flushes effects.
-   unsafe {
-      (tf.update_entity_dyn)(
-         app,
-         ptr::from_ref(entity),
-         b"FieldState".as_ptr(),
-         10,
-         (&raw mut env).cast::<c_void>(),
-         &raw const SET_VALUE_VTBL,
-      );
-   }
-}
-
 unsafe fn read_field_text(app: *mut c_void, entity: &RawEntity) -> Option<String> {
-   let tf = FIELD_SYM.get()?;
-   if app.is_null() {
-      return None;
-   }
-   // SAFETY: invoked synchronously from a GPUI button callback with live `app`.
-   unsafe {
-      let field = (tf.entity_map_get)(
-         app.cast::<u8>()
-            .add(tf.layout.app_entities)
-            .cast::<c_void>(),
-         entity.id_lo,
-         entity.id_hi,
-      );
-      if field.is_null() {
-         return None;
-      }
-      let mut ss = MaybeUninit::<SharedString>::uninit();
-      (tf.text_get)(ss.as_mut_ptr(), field, app);
-      let mut ss = ss.assume_init();
-      let result = decode_shared_string(&ss);
-      if ss.tag >= 0x19 && !ss.ptr.is_null() {
-         #[expect(clippy::cast_ptr_alignment, reason = "an `Arc` header is word aligned")]
-         let strong = &*ss.ptr.cast::<AtomicUsize>();
-         if strong.fetch_sub(1, Ordering::Release) == 1 {
-            std::sync::atomic::fence(Ordering::Acquire);
-            (tf.arc_drop_slow)(&raw mut ss.ptr);
-         }
-      }
-      Some(result)
-   }
+    let tf = FIELD_SYM.get()?;
+    if app.is_null() {
+        return None;
+    }
+    // SAFETY: called on the GPUI main thread with a live `app`, and `entity`
+    // is an `Entity<FieldState>` still mapped in `app`'s entity map.
+    let field = unsafe {
+        (tf.entity_map_get)(
+            app.cast::<u8>()
+                .add(tf.layout.app_entities)
+                .cast::<c_void>(),
+            entity.id_lo,
+            entity.id_hi,
+        )
+    };
+    if field.is_null() || field as usize == 1 {
+        return None;
+    }
+    // SAFETY: `field` is a live `FieldState`; `text_get` writes an
+    // initialised `SharedString` through the out-pointer on success.
+    let mut ss = MaybeUninit::<SharedString>::uninit();
+    unsafe { (tf.text_get)(ss.as_mut_ptr(), field, app) };
+    // SAFETY: `text_get` returned normally, so `ss` is initialised.
+    let ss = unsafe { ss.assume_init() };
+    
+    // SAFETY: `ss` is a live `SharedString` for the duration of the borrow.
+    let result = unsafe { decode_shared_string(&ss) };
+    
+    // SAFETY: `ss` is still the value `text_get` produced and is released
+    // exactly once here.
+    unsafe { release_shared_string(tf, &ss) };
+    
+    Some(result)
 }
 
 unsafe fn decode_shared_string(ss: &SharedString) -> String {
    let tag = ss.tag;
-   if tag <= 0x17 {
+   if tag < SharedString::STATIC {
       // SAFETY: inline bytes live at offsets `1..=tag` inside `SharedString`.
       let bytes =
          unsafe { slice::from_raw_parts(ptr::from_ref(ss).cast::<u8>().add(1), usize::from(tag)) };
       return String::from_utf8_lossy(bytes).into_owned();
    }
-   if tag == 0x18 {
+   if tag == SharedString::STATIC {
       if ss.ptr.is_null() || ss.len == 0 {
          return String::new();
       }
@@ -2197,7 +2203,7 @@ unsafe fn decode_shared_string(ss: &SharedString) -> String {
       let bytes = unsafe { slice::from_raw_parts(ss.ptr, ss.len) };
       return String::from_utf8_lossy(bytes).into_owned();
    }
-   if tag == 0x19 {
+   if tag == SharedString::ARC {
       if ss.ptr.is_null() || ss.len == 0 {
          return String::new();
       }
@@ -2771,53 +2777,104 @@ unsafe fn page_field(
       on_change,
    } = *spec;
    let tf = FIELD_SYM.get()?;
-   let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
-   if !fields.contains_key(id) {
-      // SAFETY: as this function's.
+
+   let needs_init = {
+      let fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      !fields.contains_key(id)
+   };
+
+   if needs_init {
+      // SAFETY: `app` and `window` are live GPUI handles.
       let entity = unsafe { new_field_entity(app, window, multiline, "") }?;
-      fields.insert(id.to_owned(), PageFieldState {
-         entity,
-         seen: String::new(),
-         refill: true,
-      });
+      let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      fields.insert(
+         id.to_owned(),
+         PageFieldState {
+            entity,
+            seen: String::new(),
+            refill: true,
+            fresh: false,
+         },
+      );
    }
-   let field = fields.get_mut(id)?;
-   if field.refill {
+
+   let (entity, refill) = {
+      let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      let field = fields.get_mut(id)?;
+      let refill = field.refill;
+      if refill {
+         field.refill = false;
+         field.seen.clear();
+         field.fresh = true;
+      }
+      let entity = field.entity;
+      drop(fields);
+      (entity, refill)
+   };
+
+   if refill {
       // SAFETY: `app` is live and the field's entity is not leased mid-render.
-      unsafe { set_field_text(app, &field.entity, initial) };
-      initial.clone_into(&mut field.seen);
-      field.refill = false;
+      let field = unsafe { field_ptr(app, &entity) };
+      // SAFETY: `field` is the live `FieldState` behind `entity`.
+      unsafe { write_field_pending(tf, field, initial) };
+      return Some(unsafe { page_text_input(tf, entity, multiline) });
    }
+
    // SAFETY: as above.
-   let text = unsafe { read_field_text(app, &field.entity) }.unwrap_or_default();
-   if text != field.seen {
-      field.seen.clone_from(&text);
+   let text = unsafe { read_field_text(app, &entity) }.unwrap_or_default();
+
+   let changed = {
+      let mut fields = PAGE_FIELDS.lock().unwrap_or_else(PoisonError::into_inner);
+      let Some(field) = fields.get_mut(id) else {
+         return Some(unsafe { page_text_input(tf, entity, multiline) });
+      };
+      let fresh = std::mem::take(&mut field.fresh);
+      let changed = !fresh && text != field.seen;
+      if fresh || changed {
+         field.seen.clone_from(&text);
+      }
+      drop(fields);
+      changed
+   };
+
+   if changed {
       let on_change = Arc::clone(on_change);
       std::thread::spawn(move || on_change(text));
    }
-   let entity = field.entity;
-   drop(fields);
+
    // SAFETY: builds a hosted `TextInput`, or a `TextArea` of
    // [`SETTING_ROWS`] rows, from `&Entity<FieldState>` in a buffer that fits
    // it, and moves it into an `AnyElement`.
-   let element = unsafe {
-      let mut any = MaybeUninit::<RawAnyElement>::uninit();
-      if multiline {
-         let mut ta = RawTextArea::zeroed();
-         (tf.text_area_new)(&raw mut ta, &raw const entity);
-         if let Some(rows) = tf.layout.text_area_rows {
-            ta.put(rows, [1u8, SETTING_ROWS]);
-            ta.put(rows + 2, [1u8, SETTING_ROWS]);
-         }
-         (tf.text_area_into_any)(any.as_mut_ptr(), &raw mut ta);
-      } else {
-         let mut ti = RawTextInput::zeroed();
-         (tf.text_input_new)(&raw mut ti, &raw const entity);
-         (tf.text_input_into_any)(any.as_mut_ptr(), &raw mut ti);
+   Some(unsafe { page_text_input(tf, entity, multiline) })
+}
+
+unsafe fn page_text_input(
+   tf: &TextFieldSymbols,
+   entity: RawEntity,
+   multiline: bool,
+) -> RawAnyElement {
+   let mut any = MaybeUninit::<RawAnyElement>::uninit();
+   if multiline {
+      let mut ta = RawTextArea::zeroed();
+      // SAFETY: `entity` is a live handle and `ta` is a zeroed local the
+      // constructor writes an initialised `RawTextArea` into.
+      unsafe { (tf.text_area_new)(&raw mut ta, &raw const entity) };
+      if let Some(rows) = tf.layout.text_area_rows {
+         ta.put(rows, [1u8, SETTING_ROWS]);
+         ta.put(rows + 2, [1u8, SETTING_ROWS]);
       }
-      any.assume_init()
-   };
-   Some(element)
+      // SAFETY: `ta` is initialised above; `into_any` moves it into `any`.
+      unsafe { (tf.text_area_into_any)(any.as_mut_ptr(), &raw mut ta) };
+   } else {
+      let mut ti = RawTextInput::zeroed();
+      // SAFETY: `entity` is a live handle and `ti` is a zeroed local the
+      // constructor writes an initialised `RawTextInput` into.
+      unsafe { (tf.text_input_new)(&raw mut ti, &raw const entity) };
+      // SAFETY: `ti` is initialised above; `into_any` moves it into `any`.
+      unsafe { (tf.text_input_into_any)(any.as_mut_ptr(), &raw mut ti) };
+   }
+   // SAFETY: whichever branch ran wrote an initialised `RawAnyElement` into `any`.
+   unsafe { any.assume_init() }
 }
 
 #[expect(
@@ -2884,7 +2941,10 @@ fn build_overlay(window: *mut c_void, app: *mut c_void) -> Option<RawDiv> {
                }
             {
                if let Some(init) = &ed.pending_init {
-                  unsafe { set_field_text(app, &ent, init) };
+                  // SAFETY: `app` is live and `ent` is its field.
+                  let field = unsafe { field_ptr(app, &ent) };
+                  // SAFETY: `field` is the live `FieldState` behind `ent`.
+                  unsafe { write_field_pending(tf, field, init) };
                }
                // SAFETY: constructs hosted `TextArea` from
                // `&Entity<FieldState>` in a buffer that fits it and converts to
@@ -2969,7 +3029,10 @@ fn build_overlay(window: *mut c_void, app: *mut c_void) -> Option<RawDiv> {
                }
             {
                if let Some(init) = &inst.pending_init {
-                  unsafe { set_field_text(app, &ent, init) };
+                  // SAFETY: `app` is live and `ent` is its field.
+                  let field = unsafe { field_ptr(app, &ent) };
+                  // SAFETY: `field` is the live `FieldState` behind `ent`.
+                  unsafe { write_field_pending(tf, field, init) };
                }
                // SAFETY: constructs hosted `TextInput` from `&Entity<FieldState>`
                // in a buffer that fits it and converts to `AnyElement`.

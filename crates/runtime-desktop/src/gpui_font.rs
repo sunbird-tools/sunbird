@@ -348,11 +348,6 @@ mod hook {
       }
    }
 
-   /// `SharedString` tags, as [`SharedString`] documents them. Below `STATIC`
-   /// the tag is the length of text stored inline after it.
-   const STATIC: u8 = 0x18;
-   const ARC: u8 = 0x19;
-
    pub(super) fn installed() -> bool {
       ORIGINAL.get().is_some()
    }
@@ -388,15 +383,17 @@ mod hook {
    ///
    /// `family` is a live `SharedString`.
    unsafe fn text(family: &SharedString) -> Option<&str> {
+      // `SharedString` tags, as [`SharedString`] documents them. Below `STATIC`
+      // the tag is the length of text stored inline after it.
       let (bytes, len) = match family.tag {
          // `gg sans` and its siblings are short enough to sit inline.
-         len @ 0..STATIC => {
+         len @ 0..SharedString::STATIC => {
             let inline = std::ptr::from_ref(family).cast::<u8>().wrapping_add(1);
             (inline, len.into())
          },
-         STATIC => (family.ptr, family.len),
+         SharedString::STATIC => (family.ptr, family.len),
          // SAFETY: an `Arc<str>`'s bytes follow its two counts.
-         ARC => (unsafe { family.ptr.add(16) }, family.len),
+         SharedString::ARC => (unsafe { family.ptr.add(16) }, family.len),
          _ => return None,
       };
       if bytes.is_null() || len > 256 {
