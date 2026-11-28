@@ -1,0 +1,218 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: >-
+  Terse maintainer voice. Lead with the verdict, short sentences, file and line refs.
+  No praise, no emojis, no summaries of what the PR does.
+
+reviews:
+  profile: chill
+  high_level_summary: false
+  poem: false
+  in_progress_fortune: false
+  review_status: false
+  review_info: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  suggested_labels: false
+  suggested_reviewers: false
+  enable_prompt_for_ai_agents: false
+  related_prs: true
+  slop_detection:
+    enabled: true
+    label: slop
+  finishing_touches:
+    unit_tests:
+      enabled: false
+    autofix:
+      enabled: false
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_usernames:
+      - dependabot[bot]
+
+  path_filters:
+    - "!Cargo.lock"
+    - "!flake.lock"
+    - "!docs/phoenix-*.json"
+    - "!crates/ui-mobile/src/props.in"
+    - "!crates/ui-mobile/templates.json"
+    - "!web/plugins/frida-*"
+
+  path_instructions:
+    - path: "**"
+      instructions: >-
+        Maintainers rewrite most contributor PRs before merging. Flag what they keep cutting.
+        Code that re-implements an existing helper, or copy-pasted blocks that belong in one
+        helper or table (search the repo for the same logic before accepting new code). Logic and
+        features nobody asked for, such as extra modes, ranking, tokenizers, or flags. Silent
+        fallbacks and false success, such as swallowed errors, `catch {}` defaults, a success
+        toast or `Ok` after partial failure, `.first()` where exactly one match is required, or
+        `unwrap_or_default` hiding a failure. Code nothing calls, including `pub` items with no
+        outside caller, `allow(dead_code)`, flags parsed but never read, and fallbacks that cannot
+        run. Single-use helpers, enums, and wrapper layers that should be inlined. Tests nobody
+        asked for, tests that restate a match or one build's encodings, and tests that sleep.
+        Comments longer than one why-line, comments that restate code, history or prior-art
+        comments, wrong comments, and rustdoc attached to the wrong item. Debug logs and info
+        chatter left in. Compat or migration code for old payloads, launchers, or storage keys.
+        Capability probes like `.supported` or `is_supported()`; APIs are always present and
+        return a no-op handle where unsupported. Unbounded growth, such as a thread per event,
+        message, or notice, caches and globals that never invalidate, and per-frame pushes into
+        globals. Claims in the PR body that the diff does not back up.
+    - path: "**/*.rs"
+      instructions: >-
+        Any panic reachable from data read out of Discord's process or from plugin JS (unwrap,
+        expect, indexing, unchecked arithmetic such as `Instant + js_duration`) kills the app, so
+        flag it. Values from host memory need sanity checks before use (Vec cap >= len, pointer
+        alignment). Flag nested Options, `Option<bool>`, bitmasks, and unnamed tuples where a
+        named enum or struct fits, raw serde_json::Value where a serde struct or IgnoredAny fits,
+        and parse/render methods where FromStr and Display fit. Flag `pub use` re-exports, `use
+        super::*`, `self::` paths, shadowed names, clones made to satisfy the borrow checker,
+        hand-typed index runs (use `seq!`), and `let x: T = ...collect()` (use turbofish).
+        Publish a OnceLock or global only after its init succeeds. A feature that bails out early
+        must log a warning so health::feature counts it. cfg gates follow what the code needs
+        (`target_arch = "x86_64"` for x86 asm) and must not switch a feature off for an OS. Code
+        under a cfg gate must stay clippy-clean on every target it builds for. Every unsafe block
+        needs a SAFETY comment naming the real invariant.
+    - path: "crates/{sigs,sigscan,hook}/**"
+      instructions: >-
+        Locators match through the typed Index, Op, and Step layer. Flag matching on disassembly
+        text (`line.text.ends_with`, `format!` of operands), raw byte patterns tied to exact
+        registers, literal TypeId hashes, and patterns that are not `const Pattern`. A locator must
+        require a unique or exact match count, never `.first()`, `find_map`, or "1 to 4 matches".
+        Register and dataflow trackers must clear a register on any write, calls included. Struct
+        sizes, strides, field order, and argument registers must be decoded or validated, never
+        assumed. Hook targets need a caller-count constraint so a shared helper is never hooked.
+        Never match localized UI text. Locators target the Discord build the repo ships against
+        and must pass `sigscan check` on every binary for each platform they claim (Windows,
+        Linux, macOS). New locators report through sigscan check and the shared locate list. A
+        hook installer must leave no half-applied state (allocate thunks before writing the jump,
+        no Err after the swap is written), detours must match the target's arity and ABI on each
+        platform, and code patches must not drop exec on a page other threads run.
+    - path: "crates/{runtime-desktop,ui-desktop}/**"
+      instructions: >-
+        Desktop features ship on Windows, Linux, and macOS together. Flag a feature cfg-gated off,
+        downgraded, or left unlocated on one platform; the fix is to locate it there or state the
+        gap in the PR body. Hook GPUI or Discord's theme layer, not per-backend graphics APIs like
+        D3D11. Never call raw pointers from Discord's UI thread on the QuickJS thread, never run
+        blocking subprocesses on the QuickJS thread, and call macOS main-thread-only APIs on the
+        main thread. Timers start at first draw, shared state has one writer, and sleeps or a
+        thread per item become one event-driven worker. Debug-only surfaces (/ui/screen,
+        /ui/input, phoenix.native) stay in debug builds. A port must not change existing x86
+        install order or gating. Invasive behavior (login items, binary patches, swizzles, hooks
+        installed for every user) defaults off, and a config flag must match the OS state it
+        claims.
+    - path: "crates/runtime/**"
+      instructions: >-
+        New plugin APIs belong here in Rust and reach plugins through the phoenix global. A new
+        phoenix.ui method works on every platform or returns a no-op handle; it never ships as a
+        dead stub. Permissions are the coarse grants in permissions.rs (gateway, discord, http,
+        messages, hooks), never per-endpoint lists, and APIs that read or rewrite outgoing
+        messages need a grant. A permission change must not break updates for installed plugins.
+        Plugin registrations are revoked on unload, after late promises resolve, and on failed
+        evaluation; unload undoes only that plugin's own state. A new credential-bearing setting
+        must use type secret so console.rs scrubs it. Self-update paths need real verification
+        (a CRC from the same server only catches corruption), versions never compare as strings,
+        and dev builds are never overwritten.
+    - path: "crates/runtime-mobile/**"
+      instructions: >-
+        UI ops must never be sent from the main thread. nativeDispatch calls only work on the
+        wasm-guest HandlerThread. Mobile UI must not assume the Android patcher ran, since iOS
+        never runs it. Flag anything that logs, prints, or writes invoke frames, dispatch frames,
+        or request headers, because they carry the user's authorization token.
+    - path: "crates/patcher/**"
+      instructions: >-
+        Resource edits go through the arsc.rs parser, never blind byte scans. An edit must apply
+        in both merge() and patch_split(). Replacing Discord's branding needs maintainer sign-off
+        and must be optional. Signing changes follow crates/patcher/keys/README.md.
+    - path: "plugins/**"
+      instructions: >-
+        Plugins stay thin TypeScript over the phoenix API, with no runtime prelude and no
+        per-plugin tsconfig or build config. Each plugin needs a typed manifest.ts whose
+        permissions match what the plugin calls (phoenix.discord needs discord, local UI needs
+        none), and the PR body explains each permission. Code must pass `tsc -p
+        plugins/tsconfig.json` (ES2023, no DOM, so no atob or btoa) and QuickJS lacks
+        URLSearchParams. Use 2-space indent and phoenix.log. Plugins send no account API requests
+        of their own; they read the store, the gateway, or onResponse. Parse untrusted JSON as
+        unknown with guards. HTTP loops need a page cap and 429 handling. Flag hot-path work in
+        per-message, per-send, or per-pick handlers (store reads, LIKE queries, extra requests,
+        full re-renders). Use Discord's names for flags and fields and check payloads against
+        https://docs.discord.food (attachments use is_spoiler, no SPOILER_ prefix). Bump the
+        plugin version on behavior changes. Flag a plugin that duplicates a bundled plugin or
+        does what external tools do system-wide.
+    - path: "scripts/**"
+      instructions: >-
+        New automation scripts are nushell (.nu). Flag new Python or bash scripts.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Flag pull_request_target jobs that check out or run PR head code, and secrets echoed
+        into logs.
+
+  pre_merge_checks:
+    title:
+      mode: warning
+      requirements: >-
+        Format is "area: lowercase imperative description", e.g. "runtime: add select settings".
+        No feat/fix/chore prefixes or scopes in parentheses.
+    description:
+      mode: warning
+    custom_checks:
+      - name: Low-effort AI PR
+        mode: error
+        instructions: >-
+          Fail when the PR reads as unreviewed AI output. Signs include thousands of added lines
+          for a feature that needs a few hundred, code that calls APIs, host modules, or phoenix
+          functions that do not exist, invented Discord payload fields, stub switches whose
+          handler does nothing (`|_enabled| {}`, unwired onChange), abstractions with one caller,
+          comments narrating each line, a PR body that restates the diff in generic bullet lists,
+          and features nobody asked for. When it fails, say so plainly in one or two sentences
+          ("This PR adds 7000 lines for a feature that does not need them and calls functions
+          that do not exist. It cannot be reviewed in this form.") and name the three worst
+          examples with file and line. Do not leave inline nitpicks on a PR that fails this check.
+      - name: Duplicate work
+        mode: warning
+        instructions: >-
+          Warn when main or another open PR already fixes the same crash, locator, or feature
+          (check related PRs and recent commits on main touching the same files). Warn when the PR
+          re-opens a closed PR without addressing the closing comment. Name the existing PR or
+          commit.
+      - name: AI tool residue
+        mode: error
+        instructions: >-
+          Fail if any commit message, PR body, or added line contains AI attribution or tool
+          residue, such as "Generated with Claude Code", "Co-Authored-By: Claude", or similar
+          trailers from Copilot, Codex, or Cursor, or leftover agent scratch files and plans.
+      - name: Tested on a device
+        mode: warning
+        instructions: >-
+          Warn unless the PR body names the platform, the Discord build, what was observed, and
+          what was not tried. A clean build or CI pass alone does not count. A patch tested on one
+          GPU, driver, or OS that applies to all must say so.
+      - name: Scope and size
+        mode: warning
+        instructions: >-
+          Over 500 added lines, list lines per feature and name the cheapest cut. Warn over 1500
+          added lines for one feature, when the PR mixes unrelated changes, reformats untouched
+          code, rewrites shared files outside its feature, or adds dependencies without saying
+          why. Large UI changes must match Discord's own design language.
+      - name: Commit hygiene
+        mode: warning
+        instructions: >-
+          Warn on merge commits (the repo is rebase-only), fixup or padding commits that belong in
+          an earlier commit, commits not grouped by root cause, long commit bodies, `Fixes #N`
+          trailers, and Discord build ids (like gb71ec80) in subjects, bodies, or branch names.
+      - name: Committed build output
+        mode: error
+        instructions: >-
+          Fail if the PR adds web/plugins/lib*.so, anything under web/pkg/, built plugin bundles,
+          APKs, or keys under crates/patcher/keys/.
+      - name: Credential safety
+        mode: error
+        instructions: >-
+          Fail if added code logs, prints, or saves authorization headers, tokens, invoke frames,
+          or dispatch frames, or sends account-mutating Discord requests in test code.
+
+knowledge_base:
+  learnings:
+    scope: local
