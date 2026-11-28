@@ -265,7 +265,7 @@ unsafe extern "C" fn name_detour<const SITE: usize>(
 
 /// Message header decorations on macOS arm64
 /// ([`phoenix_sigs::macos::message_header`]).
-#[cfg(target_os = "macos")]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 pub mod arm64 {
    use std::{
       cell::Cell,

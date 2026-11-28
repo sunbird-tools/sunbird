@@ -268,7 +268,7 @@ pub mod writer {
    static WRITER: OnceLock<(SerializeFn, DeallocFn, usize)> = OnceLock::new();
 
    /// Locates the writer using the warm arm64 reference index during startup.
-   #[cfg(target_os = "macos")]
+   #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
    pub fn install(image: &phoenix_hook::image::Image<'_>) {
       match phoenix_sigs::macos::message_writer(image) {
          Ok(found) => {

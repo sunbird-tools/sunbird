@@ -330,7 +330,7 @@ pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
       Err(err) => log::warn!("desktop context menu: {err}, menu icons from the built-in list"),
    }
    if !crate::X86_CODE {
-      #[cfg(target_os = "macos")]
+      #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
       arm64::install(image, ix);
       return;
    }
@@ -749,7 +749,7 @@ unsafe extern "C" fn build_submenu(out: *mut RawMenuVec, data: *const u64) -> *m
 /// detour is native. The item constructors take their result slot in `x8`
 /// and are called through `image::sret_caller` thunks, so
 /// [`append_plugin_actions`] calls them the x86 way.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 mod arm64 {
    use std::{
       ffi::c_void,

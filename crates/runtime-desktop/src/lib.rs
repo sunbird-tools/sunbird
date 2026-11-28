@@ -2,11 +2,7 @@
 //! Sunbird pages in User Settings, message accessories, member list
 //! decorations and the tray.
 
-#![cfg(any(
-   windows,
-   target_os = "macos",
-   all(target_os = "linux", target_arch = "x86_64")
-))]
+#![cfg(any(windows, target_os = "macos", target_os = "linux"))]
 
 mod accessories;
 mod badges;
@@ -182,10 +178,10 @@ pub(crate) unsafe fn hook_sret<F: Copy>(
 ) -> Option<F> {
    const { assert!(size_of::<F>() == size_of::<usize>()) };
    // SAFETY: forwarded from the caller.
-   #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+   #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
    let hooked = unsafe { image.hook_sret_entry(target, detour) };
    // SAFETY: forwarded from the caller.
-   #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+   #[cfg(not(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux"))))]
    let hooked = unsafe { image.hook_entry(target, detour) };
    let orig = match hooked {
       Ok(orig) => orig,
@@ -253,7 +249,7 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
       feature("headers", || headers::install(&image, header));
       feature("message", || message::install(&image));
    } else {
-      #[cfg(target_os = "macos")]
+      #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
       feature("headers", || headers::arm64::install(&image));
    }
    feature("counts", || counts::install(&image, &ix));
@@ -289,7 +285,7 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
       registry.as_ref().map(|_| ()).map_err(ToString::to_string),
    );
    if registry.is_ok() {
-      #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+      #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
       feature("direct_calls", || route_direct_calls(&image));
       discord::install(&image);
       critical(
@@ -302,7 +298,7 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
       });
       feature("ready", || ready::install(&image, &ix));
    }
-   #[cfg(target_os = "macos")]
+   #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
    feature("message_writer", || message::writer::install(&image));
    health::log_summary();
    located::save();
@@ -436,7 +432,7 @@ fn keep_pages_over_frame(image: &Image<'static>) {
 /// handler directly past the registry (macOS deletes your own message that
 /// way). Each stub passes its own trampoline in `x3` so events missing from the
 /// registry still fall back to Discord's original handler.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 fn route_direct_calls(image: &Image<'static>) {
    let detour = phoenix_runtime::gateway::entry_detour_with_fallback();
    let handlers = phoenix_runtime::gateway::handlers();

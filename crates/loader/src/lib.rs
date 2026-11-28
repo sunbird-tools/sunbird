@@ -82,7 +82,7 @@ pub unsafe extern "system" fn DllMain(
 
 #[cfg(unix)]
 extern "C" fn init() {
-   #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+   #[cfg(target_os = "linux")]
    if linux::claim() {
       desktop();
    }
@@ -95,11 +95,7 @@ extern "C" fn init() {
       logging();
       ios::start_with_phoenix();
    }
-   #[cfg(not(any(
-      target_os = "ios",
-      target_os = "macos",
-      all(target_os = "linux", target_arch = "x86_64")
-   )))]
+   #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux")))]
    {
       logging();
       run();
@@ -109,11 +105,7 @@ extern "C" fn init() {
 /// Hooks Discord before its own code runs, since Desktop Phoenix settles on
 /// the access gate and reads its HTTP vtables in its first frames, then starts
 /// phoenix on a thread.
-#[cfg(any(
-   windows,
-   target_os = "macos",
-   all(target_os = "linux", target_arch = "x86_64")
-))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn desktop() {
    logging();
    if env::var_os("SUNBIRD_GATE_ONLY").is_some() {
@@ -162,11 +154,7 @@ fn start(home: PathBuf, bundled: Vec<Plugin>) -> Result<Started, Error> {
    phoenix_runtime_mobile::start(home, bundled)
 }
 
-#[cfg(any(
-   windows,
-   target_os = "macos",
-   all(target_os = "linux", target_arch = "x86_64")
-))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn start(home: PathBuf, bundled: Vec<Plugin>) -> Result<Started, Error> {
    phoenix_runtime_desktop::start(home, bundled)
 }
@@ -176,7 +164,7 @@ fn start(home: PathBuf, bundled: Vec<Plugin>) -> Result<Started, Error> {
    target_os = "ios",
    target_os = "macos",
    windows,
-   all(target_os = "linux", target_arch = "x86_64")
+   target_os = "linux"
 )))]
 fn start(_home: PathBuf, _bundled: Vec<Plugin>) -> Result<Started, Error> {
    Err(Error::NoTarget)
@@ -360,7 +348,7 @@ mod unix {
    }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(target_os = "linux")]
 mod linux {
    use std::{
       env,

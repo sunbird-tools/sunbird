@@ -134,6 +134,29 @@ macro_rules! shim {
    };
 }
 
+// ELF spells the page and low-12 relocations differently from Mach-O.
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+macro_rules! shim {
+   ($name:ident, $off:ident, $original:ident) => {
+      #[unsafe(naked)]
+      extern "C" fn $name() {
+         core::arch::naked_asm!(
+            "adrp x16, {off}",
+            "ldrb w16, [x16, :lo12:{off}]",
+            "cbz w16, 2f",
+            "mov w0, #0",
+            "ret",
+            "2:",
+            "adrp x16, {original}",
+            "ldr x16, [x16, :lo12:{original}]",
+            "br x16",
+            off = sym $off,
+            original = sym $original,
+         );
+      }
+   };
+}
+
 shim!(dm_shim, DM_OFF, DM_POLL);
 shim!(afk_move_shim, AFK_OFF, AFK_MOVE_POLL);
 shim!(afk_disconnect_shim, AFK_OFF, AFK_DISCONNECT_POLL);

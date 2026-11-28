@@ -365,8 +365,10 @@ const MAGIC: &[u8] = b"MZ";
 #[cfg(windows)]
 const STAMP: &str = "version.txt";
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const ASSET: &str = "libphoenix-linux-x86_64.so";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const ASSET: &str = "libphoenix-linux-aarch64.so";
 #[cfg(target_os = "linux")]
 const MAGIC: &[u8] = b"\x7fELF";
 
