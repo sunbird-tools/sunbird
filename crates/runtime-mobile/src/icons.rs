@@ -1,4 +1,4 @@
-//! Discord's built-in alternate launcher icons, exposed in Sunbird Settings.
+//! Sunbird launcher icons in the alternate-icon slots Discord ships.
 
 #[cfg(target_os = "android")] use std::ffi::CString;
 
@@ -8,9 +8,8 @@ pub struct LauncherIcon {
    pub resource: &'static str,
 }
 
-/// The icons this Discord build ships as disabled activity aliases, in the
-/// order Phoenix's own `AppIcon` module uses. Treat, Trick and Zombie have
-/// aliases but no shipped icon resources here.
+/// Disabled activity aliases reused as slots for Sunbird launcher artwork.
+/// The patcher replaces their preview and launcher resources while packaging.
 pub const ICONS: &[LauncherIcon] = &[
    LauncherIcon {
       id:       "AppIcon",
@@ -19,128 +18,63 @@ pub const ICONS: &[LauncherIcon] = &[
    },
    LauncherIcon {
       id:       "HexagonIcon",
-      label:    "Vice City Theme",
+      label:    "Vice City Gear",
       resource: "images_native_custom_app_icons_hexagonicon_hexagonicon",
    },
    LauncherIcon {
       id:       "BrandInvertedIcon",
-      label:    "Brand Inverted",
+      label:    "Inverse Gear",
       resource: "images_native_custom_app_icons_brandinvertedicon_brandinvertedicon",
    },
    LauncherIcon {
       id:       "MatteDarkIcon",
-      label:    "Goth",
+      label:    "Mono Dark Gear",
       resource: "images_native_custom_app_icons_mattedarkicon_mattedarkicon",
    },
    LauncherIcon {
       id:       "MatteLightIcon",
-      label:    "Matte Light",
+      label:    "Mono Light Gear",
       resource: "images_native_custom_app_icons_mattelighticon_mattelighticon",
    },
    LauncherIcon {
-      id:       "BrandDarkIcon",
-      label:    "Brand Dark",
-      resource: "images_native_custom_app_icons_branddarkicon_branddarkicon",
-   },
-   LauncherIcon {
       id:       "PastelIcon",
-      label:    "Pastel",
+      label:    "Classic Gear",
       resource: "images_native_custom_app_icons_pastelicon_pastelicon",
    },
    LauncherIcon {
-      id:       "PirateIcon",
-      label:    "Pirate",
-      resource: "images_native_custom_app_icons_pirateicon_pirateicon",
-   },
-   LauncherIcon {
-      id:       "CamoIcon",
-      label:    "Camo",
-      resource: "images_native_custom_app_icons_camoicon_camoicon",
-   },
-   LauncherIcon {
-      id:       "SunsetIcon",
-      label:    "Sunset",
-      resource: "images_native_custom_app_icons_sunseticon_sunseticon",
-   },
-   LauncherIcon {
-      id:       "GalaxyIcon",
-      label:    "Galaxy",
-      resource: "images_native_custom_app_icons_galaxyicon_galaxyicon",
-   },
-   LauncherIcon {
-      id:       "Y2KIcon",
-      label:    "Y2K",
-      resource: "images_native_custom_app_icons_y2kicon_y2kicon",
-   },
-   LauncherIcon {
-      id:       "CherryBlossomIcon",
-      label:    "Cherry Blossom",
-      resource: "images_native_custom_app_icons_cherryblossomicon_cherryblossomicon",
-   },
-   LauncherIcon {
-      id:       "BeanieIcon",
-      label:    "Beanie",
-      resource: "images_native_custom_app_icons_beanieicon_beanieicon",
-   },
-   LauncherIcon {
-      id:       "GamingIcon",
-      label:    "Gaming",
-      resource: "images_native_custom_app_icons_gamingicon_gamingicon",
-   },
-   LauncherIcon {
-      id:       "CircuitIcon",
-      label:    "Circuit",
-      resource: "images_native_custom_app_icons_circuiticon_circuiticon",
-   },
-   LauncherIcon {
-      id:       "HoloWavesIcon",
-      label:    "Holo Waves",
-      resource: "images_native_custom_app_icons_holowavesicon_holowavesicon",
-   },
-   LauncherIcon {
-      id:       "BlushIcon",
-      label:    "Blush",
-      resource: "images_native_custom_app_icons_blushicon_blushicon",
-   },
-   LauncherIcon {
-      id:       "AngryIcon",
-      label:    "Angry",
-      resource: "images_native_custom_app_icons_angryicon_angryicon",
-   },
-   LauncherIcon {
-      id:       "MangaIcon",
-      label:    "Manga",
-      resource: "images_native_custom_app_icons_mangaicon_mangaicon",
-   },
-   LauncherIcon {
-      id:       "ControllerIcon",
-      label:    "Controller",
-      resource: "images_native_custom_app_icons_controllericon_controllericon",
-   },
-   LauncherIcon {
-      id:       "MushroomIcon",
-      label:    "Mushroom",
-      resource: "images_native_custom_app_icons_mushroomicon_mushroomicon",
-   },
-   LauncherIcon {
-      id:       "BlurpleTwilightIcon",
-      label:    "Blurple Twilight",
-      resource: "images_native_custom_app_icons_blurpletwilighticon_blurpletwilighticon",
-   },
-   LauncherIcon {
-      id:       "InRainbowsIcon",
-      label:    "In Rainbows",
-      resource: "images_native_custom_app_icons_inrainbowsicon_inrainbowsicon",
-   },
-   LauncherIcon {
       id:       "MidnightPrismIcon",
-      label:    "Midnight Prism",
+      label:    "Deep Gear",
       resource: "images_native_custom_app_icons_midnightprismicon_midnightprismicon",
    },
    LauncherIcon {
+      id:       "SunsetIcon",
+      label:    "Vice City Sun",
+      resource: "images_native_custom_app_icons_sunseticon_sunseticon",
+   },
+   LauncherIcon {
       id:       "ColorWaveIcon",
-      label:    "Color Wave",
+      label:    "Classic Sun",
       resource: "images_native_custom_app_icons_colorwaveicon_colorwaveicon",
+   },
+   LauncherIcon {
+      id:       "InRainbowsIcon",
+      label:    "Inverse Sun",
+      resource: "images_native_custom_app_icons_inrainbowsicon_inrainbowsicon",
+   },
+   LauncherIcon {
+      id:       "BlurpleTwilightIcon",
+      label:    "Deep Sun",
+      resource: "images_native_custom_app_icons_blurpletwilighticon_blurpletwilighticon",
+   },
+   LauncherIcon {
+      id:       "HoloWavesIcon",
+      label:    "Mono Dark Sun",
+      resource: "images_native_custom_app_icons_holowavesicon_holowavesicon",
+   },
+   LauncherIcon {
+      id:       "CircuitIcon",
+      label:    "Mono Light Sun",
+      resource: "images_native_custom_app_icons_circuiticon_circuiticon",
    },
 ];
 

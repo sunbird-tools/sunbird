@@ -173,8 +173,15 @@ fn text_of(payload: &Value) -> Option<String> {
 impl Settings {
    pub(super) fn entry_ops(&mut self) -> (Entry, Vec<Op>) {
       let sunbird = button_row(TITLE, ICON_PLUGIN, Some(Press::OpenMain), true);
-      let icons = button_row("App Icon", ICON_PAINT, Some(Press::OpenIcons), true);
-      let mut section = section("", vec![sunbird, icons]);
+      let mut rows = vec![sunbird];
+      #[cfg(target_os = "android")]
+      rows.push(button_row(
+         "App Icon",
+         ICON_PAINT,
+         Some(Press::OpenIcons),
+         true,
+      ));
+      let mut section = section("", rows);
       let mut ops = Vec::new();
       let root = self.build(&mut section, None, &mut ops);
       (
