@@ -1024,7 +1024,7 @@ pub fn message_context_menu(image: &Image<'_>) -> Found<MessageMenu> {
    let message = head
       .windows(3)
       .find_map(pick!(
-         &[Insn::AddImm { rd: 0, rn, imm }, Insn::Other(_), Insn::Bl { .. }]
+         &[Insn::AddImm { rd: 0, rn, imm }, Insn::Other(_) | Insn::Store { .. }, Insn::Bl { .. }]
             if (rn == 0 || rn == input) && (0x20..0x400).contains(&imm) => imm
       ))
       .ok_or("MessageContextMenu message field not found")?;
@@ -1736,9 +1736,20 @@ fn gateway_sink(image: &Image<'_>) -> Found<(usize, usize, u64)> {
       return Err("not a 64-bit image".to_owned());
    }
    let anchor = one("gateway adopt anchor", &image.find_bytes(ADOPT_ANCHOR))?;
-   let (site, _) = one("gateway adopt anchor load", &refs_to(image, &[anchor]))?;
-   let (_, open_code) =
-      arm64::function(image, site).ok_or("gateway connect_adopting has no unwind entry")?;
+   // Linux arm64 loads the anchor twice (the connect and its error path), so
+   // every loading function is read and only one SocketSink vtable may match.
+   let sites = refs_to(image, &[anchor]);
+   if sites.is_empty() {
+      return Err("gateway adopt anchor load matched 0 times".to_owned());
+   }
+   let mut open_code = Vec::new();
+   for (site, _) in sites {
+      let (start, body) =
+         arm64::function(image, site).ok_or("gateway connect_adopting has no unwind entry")?;
+      if open_code.iter().all(|&(at, _)| at != start) {
+         open_code.push((start, body));
+      }
+   }
 
    let panic_addrs = image.find_bytes(START_SEND_PANIC);
    if panic_addrs.is_empty() {
@@ -1746,7 +1757,12 @@ fn gateway_sink(image: &Image<'_>) -> Found<(usize, usize, u64)> {
    }
 
    let mut matches = Vec::new();
-   for (_, vtable) in loaded(&open_code).into_iter().flatten() {
+   let vtables = open_code
+      .iter()
+      .flat_map(|(_, code)| loaded(code))
+      .flatten()
+      .collect::<Vec<_>>();
+   for (_, vtable) in vtables {
       let Some(start_send) = sink_vtable_start_send(image, vtable) else {
          continue;
       };
