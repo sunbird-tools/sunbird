@@ -54,7 +54,8 @@ pub fn message_row(ix: &Index<'_>) -> Found<MessageRow> {
 
    let (mut row, mut message) = (None, None);
    for helper in helpers.iter() {
-      let steps = helper.steps();
+      // Flattened: arm64 ELF builds form the field address inside outlined stubs.
+      let steps = helper.flat_steps();
       let id = formatted(ix, &steps, &templates)
          .ok_or_else(|| format!("message-content helper {helper:?} formats no field"))?;
       match (rc_deref(ix, &steps), row) {
@@ -120,10 +121,11 @@ fn formatted(ix: &Index<'_>, steps: &[Step], templates: &[usize]) -> Option<usiz
 }
 
 /// `(rc, value)` from a head that loads `row.rc` and takes `value` past the
-/// pointer within three instructions.
+/// pointer within six instructions (arm64 ELF builds put an outlined stub's
+/// register moves in between).
 fn rc_deref(ix: &Index<'_>, steps: &[Step]) -> Option<(usize, usize)> {
    const HEAD: usize = 64;
-   const NEXT: usize = 3;
+   const NEXT: usize = 6;
    let frame = frame(ix, steps);
    let head = &steps[..steps.len().min(HEAD)];
    head.iter().enumerate().find_map(|(at, step)| {
