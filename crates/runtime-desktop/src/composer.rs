@@ -30,7 +30,7 @@ static HIDERS: Mutex<usize> = Mutex::new(0);
 /// indexes are built.
 pub fn install(image: &Image<'static>) {
    if crate::X86_CODE {
-      match desktop::composer_gift(image) {
+      match crate::located::get("desktop::composer_gift", || desktop::composer_gift(image)) {
          Ok(site) if image.read(site, 2) == Some(&SHOWN[..]) => {
             let _ = GIFT.set(Patch {
                site,
@@ -106,12 +106,9 @@ pub mod buttons {
    };
 
    use phoenix_hook::image::Image;
-   use phoenix_sigs::{
-      index::Index,
-      locate::{
-         clickable,
-         composer,
-      },
+   use phoenix_sigs::locate::{
+      clickable,
+      composer,
    };
 
    use crate::{
@@ -181,8 +178,10 @@ pub mod buttons {
    }
 
    /// Hooks the chat bar's button row from [`crate::prepare`].
-   pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-      let func = match composer::composer_buttons(ix) {
+   pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+      let func = match crate::located::get("composer::composer_buttons", || {
+         composer::composer_buttons(ix)
+      }) {
          Ok(func) => func,
          Err(err) => {
             log::warn!("composer buttons: {err}, plugin buttons stay off");
@@ -322,8 +321,8 @@ pub mod buttons {
    /// `TooltipPlacement::Above`.
    const TOOLTIP_ABOVE: u8 = 0;
 
-   fn install_tooltips(ix: &Index<'_>) {
-      let found = clickable::clickable(ix)
+   fn install_tooltips(ix: &crate::located::LazyIndex<'_>) {
+      let found = crate::located::get("clickable::clickable", || clickable::clickable(ix))
          .and_then(callable)
          .and_then(|found| {
             let div = gpui::layout().map(|layout| layout.div.size);

@@ -40,7 +40,7 @@ pub const STREAMED_BODY: usize = 0x178;
 
 /// Where `send`'s request keeps the fields the runtime reads, after the
 /// `http::HeaderMap` it starts with. Builds move them as fields are added.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RequestLayout {
    /// The body enum's tag, followed by its `Bytes`.
    pub body:   usize,
@@ -51,7 +51,7 @@ pub struct RequestLayout {
 }
 
 /// How `poll` hands back a response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ResponseLayout {
    /// The whole body in a `Vec`, in a [`BUFFERED_RESULT_SIZE`] result.
    Buffered,
@@ -64,7 +64,7 @@ pub enum ResponseLayout {
 
 /// Located vtable slots and host allocator entry points for Desktop Phoenix's
 /// `libdiscord/crates/http` transport.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DesktopHttpTransport {
    /// All `.rdata` vtable slots holding `ReqwestTransport::send` (may be
    /// duplicated across LLVM CGUs).

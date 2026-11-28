@@ -89,7 +89,7 @@ struct Dispatch<'a, T> {
 
 pub fn install(image: &Image<'static>) {
    let located = if crate::X86_CODE {
-      DesktopGatewaySend::locate(image)
+      crate::located::get("gateway_send::send", || DesktopGatewaySend::locate(image))
    } else {
       phoenix_sigs::macos::gateway_send(image)
    };
@@ -102,7 +102,7 @@ pub fn install(image: &Image<'static>) {
    };
    // located first, since the start_send swap hides the SocketSink
    let recv = if crate::X86_CODE {
-      DesktopGatewayRecv::locate(image)
+      crate::located::get("gateway_send::recv", || DesktopGatewayRecv::locate(image))
    } else {
       phoenix_sigs::macos::gateway_recv(image)
    };

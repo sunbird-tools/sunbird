@@ -40,14 +40,8 @@ use std::{
 use phoenix_hook::image::Image;
 use phoenix_sigs::{
    Found,
-   index::{
-      Index,
-      Isa,
-   },
-   locate::{
-      hookable,
-      settings as locate,
-   },
+   index::Isa,
+   locate::settings as locate,
 };
 
 use crate::gpui::{
@@ -215,12 +209,15 @@ pub fn hooked() -> bool {
 
 /// Shows page 24, hooks `host::section`, and adds the Sunbird entry, or takes
 /// page 24 over where the entry can't be added.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
    patch_page_visibility(image, ix);
    if !gpui::locate(image, ix) {
       return;
    }
-   let Some(page_offset) = hook_section(image, locate::settings_section(ix)) else {
+   let Some(page_offset) = hook_section(
+      image,
+      crate::located::get("locate::settings_section", || locate::settings_section(ix)),
+   ) else {
       return;
    };
    if install_entry(image, ix, page_offset) {
@@ -240,13 +237,15 @@ fn found<T>(result: Found<T>) -> Option<T> {
 
 /// Falls back to page 24 as Sunbird: its `Phoenix` name and the `PHOENIX` that
 /// ends its id replaced in place.
-fn relabel(image: &Image<'static>, ix: &Index<'_>) {
+fn relabel(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
    const NAME: &[u8] = b"Sunbird";
    const SUFFIX: &[u8] = b"SUNBIRD";
    const _: () = assert!(NAME.len() == b"Phoenix".len());
    const _: () = assert!(SUFFIX.len() == b"PHOENIX".len());
 
-   let Some(label) = found(locate::settings_label(ix)) else {
+   let Some(label) = found(crate::located::get("locate::settings_label", || {
+      locate::settings_label(ix)
+   })) else {
       return;
    };
    // SAFETY: exact-length string patches from `prepare`, before Discord's
@@ -266,14 +265,16 @@ fn relabel(image: &Image<'static>, ix: &Index<'_>) {
    }
 }
 
-fn patch_page_visibility(image: &Image<'static>, ix: &Index<'_>) {
-   let Some(guards) = found(locate::settings_visibility(ix)) else {
+fn patch_page_visibility(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let Some(guards) = found(crate::located::get("locate::settings_visibility", || {
+      locate::settings_visibility(ix)
+   })) else {
       return;
    };
    // Tightening `cmp r8d, 0xf` -> `0x0e` excludes page 24 (`24 - 9 = 15`) from
    // the gated switch so `is_page_visible(24)` returns `true` unconditionally.
    for guard in guards {
-      let written = if let Isa::X86_64 { .. } = ix.isa {
+      let written = if let Isa::X86_64 { .. } = Isa::HOST {
          // SAFETY: single-byte immediate patch in `.text` executed from
          // `DllMain`.
          unsafe { image.write_code(guard.imm8(), &[0x0E]) }
@@ -323,10 +324,18 @@ fn hook_section(image: &Image<'static>, section: Found<locate::Section>) -> Opti
 /// Hooks the page-changed handler, then the sidebar's entry push. The
 /// handler's hook only closes Sunbird, so it is harmless if the push's then
 /// fails.
-fn install_entry(image: &Image<'static>, ix: &Index<'_>, page_offset: usize) -> bool {
+fn install_entry(
+   image: &Image<'static>,
+   ix: &crate::located::LazyIndex<'_>,
+   page_offset: usize,
+) -> bool {
    let (Some(rows), Some(changed)) = (
-      found(locate::settings_sidebar_rows(ix, page_offset)),
-      found(locate::settings_page_changed(ix, page_offset)),
+      found(crate::located::get("locate::settings_sidebar_rows", || {
+         locate::settings_sidebar_rows(ix, page_offset)
+      })),
+      found(crate::located::get("locate::settings_page_changed", || {
+         locate::settings_page_changed(ix, page_offset)
+      })),
    ) else {
       return false;
    };
@@ -349,8 +358,8 @@ fn install_entry(image: &Image<'static>, ix: &Index<'_>, page_offset: usize) -> 
       return false;
    }
    let (Some(_), Some(_), Some(row)) = (
-      found(hookable(ix, rows.push)),
-      found(hookable(ix, changed)),
+      found(ix.hookable(rows.push)),
+      found(ix.hookable(changed)),
       found(crate::modal::sret_wrap(rows.row).map_err(str::to_owned)),
    ) else {
       return false;
@@ -412,8 +421,14 @@ fn install_entry(image: &Image<'static>, ix: &Index<'_>, page_offset: usize) -> 
 /// Has the pane's title name Sunbird while it is open: x86 sends the header's
 /// one call of the page-name function through [`title_call_detour`], arm64,
 /// with no call-site hooks, marks the header's render for [`name_detour`].
-fn hook_title(image: &Image<'static>, ix: &Index<'_>, page_offset: usize) -> bool {
-   let Some(title) = found(locate::settings_title(ix, page_offset)) else {
+fn hook_title(
+   image: &Image<'static>,
+   ix: &crate::located::LazyIndex<'_>,
+   page_offset: usize,
+) -> bool {
+   let Some(title) = found(crate::located::get("locate::settings_title", || {
+      locate::settings_title(ix, page_offset)
+   })) else {
       return false;
    };
    let Some(translate) = found(crate::modal::sret_wrap(title.translate).map_err(str::to_owned))
@@ -423,7 +438,7 @@ fn hook_title(image: &Image<'static>, ix: &Index<'_>, page_offset: usize) -> boo
    // SAFETY: the translate the locator decoded, called with its return slot
    // first as `TranslateFn` has it.
    let translate = unsafe { std::mem::transmute::<usize, TranslateFn>(translate) };
-   let name = if let Isa::X86_64 { .. } = ix.isa {
+   let name = if let Isa::X86_64 { .. } = Isa::HOST {
       // SAFETY: runs from `prepare` before Discord's threads; the detour has
       // the page-name function's ABI.
       unsafe { image.hook_call(title.call, &[], title_call_detour as *const () as usize) }
@@ -441,11 +456,11 @@ fn hook_title(image: &Image<'static>, ix: &Index<'_>, page_offset: usize) -> boo
 /// it names while Sunbird is open.
 fn hook_header(
    image: &Image<'static>,
-   ix: &Index<'_>,
+   ix: &crate::located::LazyIndex<'_>,
    title: &locate::SettingsTitle,
 ) -> Option<NameFn> {
-   found(hookable(ix, title.name))?;
-   found(hookable(ix, title.header))?;
+   found(ix.hookable(title.name))?;
+   found(ix.hookable(title.header))?;
    // SAFETY: runs from `prepare` before Discord's threads; the detour has the
    // page-name function's sret ABI.
    let name = unsafe {
@@ -534,8 +549,12 @@ unsafe extern "C" fn header_detour(
 
 /// Hooks the selected-page map, then the sidebar render that has it select no
 /// page row while Sunbird is open. The map's hook alone changes nothing.
-fn hook_unselect(image: &Image<'static>, ix: &Index<'_>, rows: &locate::SidebarRows) -> bool {
-   let Some(_) = found(hookable(ix, rows.sidebar)) else {
+fn hook_unselect(
+   image: &Image<'static>,
+   ix: &crate::located::LazyIndex<'_>,
+   rows: &locate::SidebarRows,
+) -> bool {
+   let Some(_) = found(ix.hookable(rows.sidebar)) else {
       return false;
    };
    if !hook_selected(image, ix, rows) {
@@ -560,11 +579,15 @@ fn hook_unselect(image: &Image<'static>, ix: &Index<'_>, rows: &locate::SidebarR
 /// Hooks the selected-page map at its entry, or where it is too short, swaps
 /// the pointer the sidebar calls it through (Linux) or readies the sidebar's
 /// call of it for [`SelectedCall::show`] (macOS).
-fn hook_selected(image: &Image<'static>, ix: &Index<'_>, rows: &locate::SidebarRows) -> bool {
+fn hook_selected(
+   image: &Image<'static>,
+   ix: &crate::located::LazyIndex<'_>,
+   rows: &locate::SidebarRows,
+) -> bool {
    const BL: (u32, u32) = (0xFC00_0000, 0x9400_0000);
 
    let detour = selected_detour as *const () as usize;
-   let orig = match (hookable(ix, rows.selected), rows.selected_via, ix.isa) {
+   let orig = match (ix.hookable(rows.selected), rows.selected_via, Isa::HOST) {
       (Ok(_), ..) => {
          // SAFETY: runs from `prepare` before Discord's threads; the detour has
          // the map's `fn(u8) -> u8` ABI.

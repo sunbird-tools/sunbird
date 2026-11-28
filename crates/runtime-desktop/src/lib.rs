@@ -30,6 +30,7 @@ mod headers;
 mod health;
 mod icons;
 mod js;
+mod located;
 pub mod mana_theme;
 mod members;
 mod message;
@@ -89,13 +90,7 @@ use phoenix_runtime::{
       StoreError,
    },
 };
-use phoenix_sigs::{
-   index::{
-      Index,
-      Isa,
-   },
-   registry::GatewayRegistry,
-};
+use phoenix_sigs::registry::GatewayRegistry;
 use rquickjs::{
    Ctx,
    Object,
@@ -214,7 +209,7 @@ static PREPARED: Mutex<Option<(Image<'static>, &'static GatewayRegistry)>> = Mut
 /// reading the gateway registry and HTTP vtables once started, so hooks swapped
 /// later from [`start`]'s thread never run. [`start`] picks up what this
 /// hooked.
-pub fn prepare() -> Result<(), Error> {
+pub fn prepare(home: &Path) -> Result<(), Error> {
    use health::{
       critical,
       feature,
@@ -223,7 +218,8 @@ pub fn prepare() -> Result<(), Error> {
 
    phoenix_runtime::set_platform(&Desktop);
    let image = phoenix_runtime::target()?;
-   let ix = Index::new(&image, Isa::HOST);
+   located::load(&image, home);
+   let ix = located::LazyIndex::new(&image);
    critical("access_gate", open_access_gate(&image, &ix));
    open_gate_extras(&image);
    settings::install(&image, &ix);
@@ -278,7 +274,16 @@ pub fn prepare() -> Result<(), Error> {
    feature("os_redraw", || <os::Os as os::DesktopOs>::install(&image));
    #[cfg(target_os = "linux")]
    feature("shortcuts", shortcuts::linux::install);
-   let registry = phoenix_runtime::hook(&image);
+   let walked = located::get("registry::gateway", || {
+      GatewayRegistry::locate(&image)
+         .map(|walked| walked.entries().to_vec())
+         .map_err(|err| err.to_string())
+   });
+   let registry = walked.map_or_else(
+      // Walked again for the runtime's own error.
+      |_| phoenix_runtime::hook(&image),
+      |entries| phoenix_runtime::hook_walked(&image, GatewayRegistry::from_entries(entries)),
+   );
    critical(
       "gateway",
       registry.as_ref().map(|_| ()).map_err(ToString::to_string),
@@ -300,6 +305,7 @@ pub fn prepare() -> Result<(), Error> {
    #[cfg(target_os = "macos")]
    feature("message_writer", || message::writer::install(&image));
    health::log_summary();
+   located::save();
    // The indexes are tens of MB and nothing reads them after startup.
    drop(ix);
    phoenix_sigs::desktop::release_call_index();
@@ -312,7 +318,7 @@ pub fn prepare() -> Result<(), Error> {
 pub fn open_gate_only() -> Result<(), Error> {
    phoenix_runtime::set_platform(&Desktop);
    let image = phoenix_runtime::target()?;
-   let _ = open_access_gate(&image, &Index::new(&image, Isa::HOST));
+   let _ = open_access_gate(&image, &located::LazyIndex::new(&image));
    open_gate_extras(&image);
    #[cfg(windows)]
    restart::install(&image);
@@ -353,7 +359,10 @@ pub fn start(home: PathBuf, bundled: Vec<Plugin>) -> Result<Started, Error> {
 /// its small caller is `signed_in && access(..) != 2`. This makes it return 2.
 /// Discord settles on the gate within its first frames, so the loader calls
 /// this from `DllMain` or the constructor, before Discord's own code.
-fn open_access_gate(image: &Image<'static>, ix: &Index<'_>) -> Result<(), String> {
+fn open_access_gate(
+   image: &Image<'static>,
+   ix: &crate::located::LazyIndex<'_>,
+) -> Result<(), String> {
    /// `mov al, 2; ret`
    const ALLOWED: [u8; 3] = [0xB0, 0x02, 0xC3];
 
@@ -362,9 +371,10 @@ fn open_access_gate(image: &Image<'static>, ix: &Index<'_>) -> Result<(), String
    } else {
       &phoenix_sigs::macos::NO_GATE[..]
    };
-   let access = phoenix_sigs::locate::access_gate(ix)
-      .inspect_err(|err| log::warn!("access gate: {err}, leaving it"))?
-      .start;
+   let access = crate::located::get("locate::access_gate", || {
+      phoenix_sigs::locate::access_gate(ix).map(|func| func.start)
+   })
+   .inspect_err(|err| log::warn!("access gate: {err}, leaving it"))?;
    // SAFETY: Discord's own code, written from `DllMain` or the constructor
    // before it runs.
    match unsafe { image.write_code(access, allowed) } {
@@ -457,7 +467,9 @@ fn open_notification_gate(image: &Image<'static>) {
       phoenix_hook::x86::Abi::SysV => &[0x31, 0xC0, 0xC3],
       phoenix_hook::x86::Abi::Win64 => &[0x31, 0xC0, 0x90],
    };
-   let gate = match phoenix_sigs::desktop::notification_gate(image) {
+   let gate = match crate::located::get("desktop::notification_gate", || {
+      phoenix_sigs::desktop::notification_gate(image)
+   }) {
       Ok(gate) => gate,
       Err(err) => {
          log::warn!("notification gate: {err}, leaving it");

@@ -84,7 +84,7 @@ fn stores_text(func: &Func<'_>, ptr: Reg, len: Reg) -> bool {
 
 /// Phoenix's session READY handler, `fn(out, payload) -> out`, which owns the
 /// gateway payload and parses READY itself, past the registry.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ReadySession {
    pub func:     usize,
    /// The payload's kind byte, and the kind whose READY is parsed from the raw

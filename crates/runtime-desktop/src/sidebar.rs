@@ -23,10 +23,7 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::channel,
-};
+use phoenix_sigs::locate::channel;
 
 /// `f32 width(&RootModel, &App)`, and `column`'s same signature.
 type WidthFn = unsafe extern "C" fn(*const c_void, *const c_void) -> f32;
@@ -60,14 +57,15 @@ thread_local! {
 
 /// Hooks the width getter, its two layout callers and the handle's gate from
 /// [`crate::prepare`], before Discord's threads run.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   let found = match channel::channel_sidebar(ix) {
-      Ok(found) => found,
-      Err(err) => {
-         log::warn!("channel sidebar: {err}, it stays");
-         return;
-      },
-   };
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let found =
+      match crate::located::get("channel::channel_sidebar", || channel::channel_sidebar(ix)) {
+         Ok(found) => found,
+         Err(err) => {
+            log::warn!("channel sidebar: {err}, it stays");
+            return;
+         },
+      };
    // SAFETY: `rail` is a small function taking no arguments and returning an
    // `f32`, which the locator checked by the column width calling it alone.
    let _ = RAIL.set(unsafe { std::mem::transmute::<usize, RailFn>(found.rail) });

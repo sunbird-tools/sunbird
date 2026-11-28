@@ -370,7 +370,9 @@ mod linux {
    }
 
    fn install_primary_display(image: &Image<'static>) {
-      let found = match desktop::linux_primary_display(image) {
+      let found = match crate::located::get("desktop::linux_primary_display", || {
+         desktop::linux_primary_display(image)
+      }) {
          Ok(found) => found,
          Err(err) => {
             log::warn!("desktop overlay: {err}");
@@ -409,13 +411,14 @@ mod linux {
       fn install(image: &Image<'static>) {
          skip_va_scaler(image);
          install_primary_display(image);
-         let found = match desktop::wayland_frame(image) {
-            Ok(found) => found,
-            Err(err) => {
-               log::warn!("desktop redraw: {err}, plugin UI waits for the next frame");
-               return;
-            },
-         };
+         let found =
+            match crate::located::get("desktop::wayland_frame", || desktop::wayland_frame(image)) {
+               Ok(found) => found,
+               Err(err) => {
+                  log::warn!("desktop redraw: {err}, plugin UI waits for the next frame");
+                  return;
+               },
+            };
          // SAFETY: from `prepare`, before Discord's threads run; the detour
          // has `frame`'s signature.
          let trampoline =

@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// The menu items' handlers for one command each, and the pane's type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PaneCommands {
    /// `fn(pane: &WeakEntity<ChatPaneView>, app: &&mut App, message_id: &u64,
    /// window: &mut Window)`, which upgrades the pane and runs the command

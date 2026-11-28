@@ -1713,7 +1713,9 @@ pub fn install(image: &Image<'static>) {
       return;
    }
    let located = if crate::X86_CODE {
-      desktop::modal(image, div_into_any, &gpui_layout.div)
+      crate::located::get("desktop::modal", || {
+         desktop::modal(image, div_into_any, &gpui_layout.div)
+      })
    } else {
       phoenix_sigs::macos::modal(image, div_into_any, &gpui_layout.div)
    };
@@ -1760,7 +1762,7 @@ pub fn install(image: &Image<'static>) {
    let _ = MODAL_SYM.set(modal_sym);
 
    let tf = if crate::X86_CODE {
-      desktop::text_fields(image)
+      crate::located::get("desktop::text_fields", || desktop::text_fields(image))
    } else {
       phoenix_sigs::macos::text_fields(image)
    };
@@ -1859,7 +1861,7 @@ pub fn install(image: &Image<'static>) {
 /// above it.
 fn install_settings_layer(image: &Image<'static>) {
    let located = if crate::X86_CODE {
-      desktop::settings_layer(image)
+      crate::located::get("desktop::settings_layer", || desktop::settings_layer(image))
    } else {
       phoenix_sigs::macos::settings_layer(image)
    };
@@ -1887,7 +1889,9 @@ fn install_settings_layer(image: &Image<'static>) {
 
 fn install_transitions(image: &Image<'static>) {
    let anim = if crate::X86_CODE {
-      desktop::animation_frame(image)
+      crate::located::get("desktop::animation_frame", || {
+         desktop::animation_frame(image)
+      })
    } else {
       phoenix_sigs::macos::animation_frame(image)
    };

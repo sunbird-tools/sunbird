@@ -47,7 +47,7 @@ struct Bucket {
 
 /// Locates `to_value` and the drop glue from `prepare`.
 pub fn install(image: &Image<'static>) {
-   match desktop::message_json(image) {
+   match crate::located::get("desktop::message_json", || desktop::message_json(image)) {
       Ok(found) => {
          // SAFETY: shape-checked by `sigs`; both take their pointers in the
          // first argument registers, as the C ABI passes them.

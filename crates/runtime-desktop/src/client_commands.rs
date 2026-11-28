@@ -24,10 +24,7 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::commands,
-};
+use phoenix_sigs::locate::commands;
 
 /// `Pin<Box<dyn Future<Output = Vec<u8>>>>`.
 #[repr(C)]
@@ -94,8 +91,8 @@ pub enum Error {
    Reply,
 }
 
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   let found = match commands::commands(ix) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   let found = match crate::located::get("commands::commands", || commands::commands(ix)) {
       Ok(found) => found,
       Err(err) => {
          log::warn!("commands: {err}, plugins fall back to the UI");
@@ -124,7 +121,7 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
          log::warn!("commands: no pending reply getter, the newest account's client runs them");
       },
    }
-   match commands::client_new(ix) {
+   match crate::located::get("commands::client_new", || commands::client_new(ix)) {
       // SAFETY: runs from `prepare` before Discord builds a client, and
       // `client_poll_detour` has the poll's Rust-ABI signature.
       Ok(poll) => {

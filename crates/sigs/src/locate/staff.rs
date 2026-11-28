@@ -179,7 +179,7 @@ fn thumb_check(ix: &Index<'_>, readers: &[Func<'_>]) -> Option<usize> {
 }
 
 /// `flag_override`, and on armeabi-v7a the check function the runtime hooks.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Staff {
    pub field: StaffField,
    pub check: Option<usize>,

@@ -23,7 +23,6 @@ use std::{
 use phoenix_hook::image::Image;
 use phoenix_sigs::{
    desktop,
-   index::Index,
    locate::message,
 };
 
@@ -104,10 +103,14 @@ pub fn install(image: &Image<'static>, found: Result<Located, String>) {
 type Located = (Symbols, Vec<usize>, desktop::Frame);
 
 /// Finds [`Located`]. Runs before any hook goes in.
-pub fn locate(image: &Image<'_>, ix: &Index<'_>) -> Result<Located, String> {
-   let row = message::message_row(ix)?;
-   let body = message::message_body(ix, row.func)?;
-   let header = desktop::message_header(image, body.func)?;
+pub fn locate(image: &Image<'_>, ix: &crate::located::LazyIndex<'_>) -> Result<Located, String> {
+   let row = crate::located::get("message::message_row", || message::message_row(ix))?;
+   let body = crate::located::get("message::message_body", || {
+      message::message_body(ix, row.func)
+   })?;
+   let header = crate::located::get("desktop::message_header", || {
+      desktop::message_header(image, body.func)
+   })?;
    if header.sites.len() > SITES {
       return Err(format!("{} header name calls", header.sites.len()));
    }

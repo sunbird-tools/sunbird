@@ -125,7 +125,9 @@ fn desktop() {
       return;
    }
    let started = std::time::Instant::now();
-   match panic::catch_unwind(AssertUnwindSafe(phoenix_runtime_desktop::prepare)) {
+   match panic::catch_unwind(AssertUnwindSafe(|| {
+      phoenix_runtime_desktop::prepare(&home())
+   })) {
       Ok(Ok(())) => {},
       Ok(Err(err)) => log::error!("phoenix could not hook Discord: {err}"),
       Err(_) => log::error!("phoenix panicked while hooking Discord"),

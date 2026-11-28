@@ -467,7 +467,7 @@ pub fn hooked() -> bool {
 /// and installs request/response interception.
 pub fn install(image: &Image<'static>) {
    let found = if crate::X86_CODE {
-      DesktopHttpTransport::locate(image)
+      crate::located::get("http::transport", || DesktopHttpTransport::locate(image))
    } else {
       phoenix_sigs::macos::http_transport(image)
    };

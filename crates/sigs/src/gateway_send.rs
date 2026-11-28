@@ -16,7 +16,7 @@ pub(crate) const POLL_NEXT_SLOT_OFFSET: usize = 24;
 // WsMessage::Text(String) tag and payload offset in libdiscord_gateway::transport
 pub const WS_MESSAGE_TEXT_TAG: u64 = 2;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DesktopGatewaySend {
    pub start_send_slots: Vec<usize>,
    pub start_send_fn:    usize,
@@ -43,14 +43,14 @@ impl DesktopGatewaySend {
 
 /// A `dyn Stream` of `WsMessage`s the gateway reads, with every vtable slot
 /// holding its `poll_next`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GatewayStream {
    pub poll_next: usize,
    pub slots:     Vec<usize>,
 }
 
 /// The read halves Discord splits from a gateway socket, one per connect path.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DesktopGatewayRecv {
    pub streams: Vec<GatewayStream>,
 }

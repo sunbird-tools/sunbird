@@ -13,12 +13,9 @@ use std::sync::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   index::Index,
-   locate::{
-      CodePatch,
-      sticker,
-   },
+use phoenix_sigs::locate::{
+   CodePatch,
+   sticker,
 };
 
 /// `ChatPaneView::chat_send_sticker_now(&mut self, sticker: Sticker, bool,
@@ -39,14 +36,14 @@ static SEND: OnceLock<SendFn> = OnceLock::new();
 static GATES: OnceLock<[CodePatch; 2]> = OnceLock::new();
 
 /// Hooks the send from [`crate::prepare`], before Discord's threads run.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   match sticker::locked_gates(ix) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   match crate::located::get("sticker::locked_gates", || sticker::locked_gates(ix)) {
       Ok(gates) => {
          let _ = GATES.set(gates);
       },
       Err(err) => log::warn!("sticker gates: {err}, stickers needing Nitro show the ad"),
    }
-   let func = match sticker::sticker_send(ix) {
+   let func = match crate::located::get("sticker::sticker_send", || sticker::sticker_send(ix)) {
       Ok(func) => func,
       Err(err) => {
          log::warn!("sticker send: {err}, stickers go straight to Phoenix");

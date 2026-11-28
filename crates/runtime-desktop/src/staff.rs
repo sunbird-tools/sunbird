@@ -18,13 +18,7 @@ use std::{
 };
 
 use phoenix_hook::image::Image;
-use phoenix_sigs::{
-   StaffField as Field,
-   index::{
-      Index,
-      Isa,
-   },
-};
+use phoenix_sigs::StaffField as Field;
 
 const STAFF: u64 = 1;
 
@@ -33,20 +27,22 @@ static LOGGED: AtomicBool = AtomicBool::new(false);
 
 /// Scans Discord synchronously from `prepare` so `flag_override` is ready
 /// before the first gateway event fires.
-pub fn prepare(ix: &Index<'_>) {
+pub fn prepare(ix: &crate::located::LazyIndex<'_>) {
    LOCATED.get_or_init(|| locate(ix));
 }
 
 /// Locates on its own index when [`prepare`] did not run.
 pub fn start(image: &'static Image<'static>) {
-   LOCATED.get_or_init(|| locate(&Index::new(image, Isa::HOST)));
+   LOCATED.get_or_init(|| locate(&crate::located::LazyIndex::new(image)));
 }
 
-fn locate(ix: &Index<'_>) -> Option<Field> {
-   let field = phoenix_sigs::locate::staff::staff(ix)
-      .inspect_err(|err| log::warn!("staff: {err}, leaving flag_override as is"))
-      .ok()?
-      .field;
+fn locate(ix: &crate::located::LazyIndex<'_>) -> Option<Field> {
+   let field = crate::located::get("locate::staff::staff", || {
+      phoenix_sigs::locate::staff::staff(ix)
+   })
+   .inspect_err(|err| log::warn!("staff: {err}, leaving flag_override as is"))
+   .ok()?
+   .field;
    log::info!(
       "staff: located flag_override at tag={:#x} value={:#x}",
       field.tag,

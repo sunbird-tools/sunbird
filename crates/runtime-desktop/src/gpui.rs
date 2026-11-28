@@ -38,7 +38,6 @@ use phoenix_sigs::{
       StyleOffsets,
       layout,
    },
-   index::Index,
    locate,
 };
 
@@ -572,14 +571,16 @@ pub fn located() -> bool {
 
 /// Resolves Discord's native GPUI / Mana widget builders from unique string
 /// anchors. Safe to call from `DllMain` (`prepare()`).
-pub fn locate(image: &Image<'static>, ix: &Index<'_>) -> bool {
+pub fn locate(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) -> bool {
    if SYMBOLS.get().is_some() {
       return true;
    }
 
    let found = if crate::X86_CODE {
-      locate::gpui::gpui(ix).and_then(|gpui| {
-         let layout = desktop::gpui_layouts(image, &gpui)?;
+      crate::located::get("locate::gpui::gpui", || locate::gpui::gpui(ix)).and_then(|gpui| {
+         let layout = crate::located::get("desktop::gpui_layouts", || {
+            desktop::gpui_layouts(image, &gpui)
+         })?;
          let raw = gpui.div_into_any;
          Ok((gpui, layout, raw))
       })
@@ -658,9 +659,9 @@ pub fn locate(image: &Image<'static>, ix: &Index<'_>) -> bool {
 #[cfg(target_os = "macos")]
 fn arm64_builders(
    image: &Image<'_>,
-   ix: &Index<'_>,
+   ix: &crate::located::LazyIndex<'_>,
 ) -> Result<(desktop::Gpui, GpuiLayout, usize), String> {
-   let gpui = locate::gpui::gpui(ix)?;
+   let gpui = crate::located::get("locate::gpui::gpui", || locate::gpui::gpui(ix))?;
    let layout = phoenix_sigs::macos::gpui_layouts(image, &gpui)?;
    let raw = gpui.div_into_any;
    let thunk = |addr: usize| {
@@ -687,7 +688,7 @@ fn arm64_builders(
 #[cfg(not(target_os = "macos"))]
 fn arm64_builders(
    _image: &Image<'_>,
-   _ix: &Index<'_>,
+   _ix: &crate::located::LazyIndex<'_>,
 ) -> Result<(desktop::Gpui, GpuiLayout, usize), String> {
    Err("no arm64 builders off macOS".to_owned())
 }
@@ -1464,7 +1465,7 @@ static SVG: OnceLock<SvgSymbols> = OnceLock::new();
 /// Resolves the `Svg` builders, after [`locate`].
 pub fn locate_svg(image: &Image<'static>) {
    let located = if crate::X86_CODE {
-      desktop::svg_builders(image)
+      crate::located::get("desktop::svg_builders", || desktop::svg_builders(image))
    } else {
       arm64_svg_builders(image)
    };

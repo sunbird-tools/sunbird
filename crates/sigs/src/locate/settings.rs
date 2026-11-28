@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Page 24's sidebar name `Phoenix` and its id, both relabeled in place.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SettingsLabel {
    pub name:   usize,
    /// The id literal the code loads, `DESKTOP_PHOENIX` or `PHOENIX`.
@@ -67,7 +67,7 @@ pub fn settings_label(ix: &Index<'_>) -> Found<SettingsLabel> {
 }
 
 /// A `cmp page - 9, 15` that sends pages outside 9 to 24 to "visible".
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct VisibilityGuard {
    pub cmp: usize,
    pub len: u8,
@@ -155,7 +155,7 @@ fn subtracts(ix: &Index<'_>, step: &Step) -> Option<(Reg, u64)> {
 
 /// `host::section`, which renders a settings page, and the offset of the
 /// active page byte in the state it renders.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Section {
    pub func:        usize,
    pub page_offset: usize,
@@ -207,7 +207,7 @@ pub fn settings_section(ix: &Index<'_>) -> Found<Section> {
 /// The sidebar render (the one loader of Log Out's `us-logout` id) moves each
 /// entry into a `Vec` through one push. Log Out's row comes from its own
 /// constructor right before its push, the last one.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SidebarRows {
    /// The render, with [`settings_section`]'s arguments.
    pub sidebar:       usize,
@@ -338,7 +338,7 @@ pub fn settings_sidebar_rows(ix: &Index<'_>, page_offset: usize) -> Found<Sideba
 }
 
 /// What the settings pane's title names the active page with.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SettingsTitle {
    /// The page-name function, `fn(page) -> Text` through the return slot,
    /// [`SettingsLabel::func`].
@@ -591,7 +591,7 @@ pub fn settings_page_changed(ix: &Index<'_>, page_offset: usize) -> Found<usize>
 }
 
 /// The client's own message deletes, found from the `MESSAGE_DELETE` handler.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OptimisticDelete {
    /// The one other caller of callees only the handler and it call.
    pub sibling: usize,

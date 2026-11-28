@@ -36,12 +36,9 @@ use phoenix_sigs::desktop::{
    icon_names,
    layout,
 };
-use phoenix_sigs::{
-   index::Index,
-   locate::menu::{
-      self,
-      SubmenuLayout,
-   },
+use phoenix_sigs::locate::menu::{
+   self,
+   SubmenuLayout,
 };
 
 use crate::{
@@ -325,8 +322,8 @@ fn legacy_icon(icon: &str) -> Option<u16> {
 }
 
 /// Locates and hooks `MessageContextMenu` from `DllMain`.
-pub fn install(image: &Image<'static>, ix: &Index<'_>) {
-   match icon_names(image) {
+pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+   match crate::located::get("desktop::icon_names", || icon_names(image)) {
       Ok(names) => {
          let _ = ICON_NAMES.set(names);
       },
@@ -337,7 +334,9 @@ pub fn install(image: &Image<'static>, ix: &Index<'_>) {
       arm64::install(image, ix);
       return;
    }
-   let menu = match desktop::message_context_menu(image) {
+   let menu = match crate::located::get("desktop::message_context_menu", || {
+      desktop::message_context_menu(image)
+   }) {
       Ok(menu) => menu,
       Err(err) => {
          log::warn!("desktop context menu: {err}, skipping");
@@ -637,8 +636,8 @@ fn action_item(
 }
 
 /// The layout plugin submenus copy, with [`SUBMENU_VTBL`] set up for it.
-fn submenu(ix: &Index<'_>) -> Option<SubmenuLayout> {
-   let layout = menu::submenu(ix)
+fn submenu(ix: &crate::located::LazyIndex<'_>) -> Option<SubmenuLayout> {
+   let layout = crate::located::get("menu::submenu", || menu::submenu(ix))
       .inspect_err(|err| log::warn!("desktop context menu: {err}, submenus show inline"))
       .ok()?;
    let build = build_submenu as *const () as usize;
@@ -798,7 +797,7 @@ mod arm64 {
       (1 << 32..1 << 63).contains(&value)
    }
 
-   pub fn install(image: &Image<'static>, ix: &Index<'_>) {
+   pub fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
       let menu = match phoenix_sigs::macos::message_context_menu(image) {
          Ok(menu) => menu,
          Err(err) => {

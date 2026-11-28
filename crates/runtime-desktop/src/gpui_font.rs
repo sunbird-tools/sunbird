@@ -29,7 +29,7 @@ pub fn is_supported() -> bool {
    hook::installed()
 }
 
-pub fn install(image: &phoenix_hook::image::Image<'static>, ix: &phoenix_sigs::index::Index<'_>) {
+pub fn install(image: &phoenix_hook::image::Image<'static>, ix: &crate::located::LazyIndex<'_>) {
    hook::install(image, ix);
 }
 
@@ -320,10 +320,7 @@ mod hook {
    };
 
    use phoenix_hook::image::Image;
-   use phoenix_sigs::{
-      index::Index,
-      locate,
-   };
+   use phoenix_sigs::locate;
 
    use super::FONTS;
    use crate::gpui::SharedString;
@@ -360,9 +357,11 @@ mod hook {
       ORIGINAL.get().is_some()
    }
 
-   pub(super) fn install(image: &Image<'static>, ix: &Index<'_>) {
-      let func = match locate::resolve_font(ix) {
-         Ok(func) => func.start,
+   pub(super) fn install(image: &Image<'static>, ix: &crate::located::LazyIndex<'_>) {
+      let func = match crate::located::get("locate::resolve_font", || {
+         locate::resolve_font(ix).map(|func| func.start)
+      }) {
+         Ok(func) => func,
          Err(err) => {
             log::warn!("desktop fonts: {err}, fonts disabled");
             return;
