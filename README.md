@@ -78,6 +78,7 @@ The bundled plugins live in [`plugins/`](plugins/). CI bundles them with esbuild
 | Plugin | What it does |
 |---|---|
 | [`global-badges`](plugins/global-badges) | Shows user badges from other Discord client mods on profiles |
+| [`member-count`](plugins/member-count) | Shows how many members a server has, and how many are online, in its tooltip in the server list (Desktop) |
 | [`permissions-viewer`](plugins/permissions-viewer) | Shows someone's roles and permissions on a server and in a channel |
 | [`platform-indicators`](plugins/platform-indicators) | Shows which devices people are online from: desktop, mobile, web or console |
 | [`reviewdb`](plugins/reviewdb) | Adds a ReviewDB tab to user profiles |
@@ -169,7 +170,7 @@ Run `node web/tools/bundle-plugins.ts --out <dir> my-plugin` to bundle one plugi
 | API | Use it for |
 |---|---|
 | `phoenix.gateway`, `phoenix.on`, `phoenix.hook` | Watching or changing gateway events as Phoenix handles them. |
-| `phoenix.ui` | Buttons, message accessories and actions, decorations, profile content, dialogs, pages, notifications, clipboard, and toasts. |
+| `phoenix.ui` | Buttons, message accessories and actions, decorations, server tooltips, profile content, dialogs, pages, notifications, clipboard, and toasts. |
 | `phoenix.commands` | Slash commands in the message box. |
 | `phoenix.messages` | Local-only messages and interceptors for text you send. |
 | `phoenix.settings`, `phoenix.storage`, `phoenix.log` | Settings controls, per-plugin JSON storage, and log lines. |

@@ -964,6 +964,16 @@ fn api<'js>(
          },
       )?,
    )?;
+   let owner = plugin.to_owned();
+   api.set(
+      "sleep",
+      Function::new(ctx.clone(), move |ctx: Ctx<'js>, ms: f64| {
+         /// An hour, past which a plugin is waiting on something else.
+         const MAX_MS: f64 = 3_600_000.0;
+         let ms = if ms.is_finite() { ms.clamp(0.0, MAX_MS) } else { 0.0 };
+         crate::js::background::after(&ctx, &owner, Duration::from_secs_f64(ms / 1000.0))
+      })?,
+   )?;
    Ok(api)
 }
 

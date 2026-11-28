@@ -1,5 +1,24 @@
 //! Promises that worker threads settle.
 
+use std::{
+   cmp::Reverse,
+   collections::BinaryHeap,
+   sync::{
+      Condvar,
+      Mutex,
+      PoisonError,
+      atomic::{
+         AtomicBool,
+         AtomicU64,
+         Ordering,
+      },
+   },
+   time::{
+      Duration,
+      Instant,
+   },
+};
+
 use rquickjs::{
    CatchResultExt,
    Ctx,
@@ -101,15 +120,7 @@ pub fn in_background<'js>(
    owner: &str,
    work: impl FnOnce() -> Settlement + Send + 'static,
 ) -> rquickjs::Result<rquickjs::Promise<'js>> {
-   static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-   let (promise, resolve, reject) = ctx.promise()?;
-   let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-   ctx.userdata::<Registry<'js>>()
-      .ok_or_else(|| Exception::throw_internal(ctx, "no registry"))?
-      .pending
-      .borrow_mut()
-      .insert(id, (owner.to_owned(), resolve, reject));
+   let (promise, id) = pending(ctx, owner)?;
    std::thread::spawn(move || {
       let settlement = work();
       if let Some(engine) = crate::engine() {
@@ -117,4 +128,88 @@ pub fn in_background<'js>(
       }
    });
    Ok(promise)
+}
+
+/// A promise registered for [`Engine::settle`], and its id.
+fn pending<'js>(ctx: &Ctx<'js>, owner: &str) -> rquickjs::Result<(rquickjs::Promise<'js>, u64)> {
+   static NEXT: AtomicU64 = AtomicU64::new(0);
+
+   let (promise, resolve, reject) = ctx.promise()?;
+   let id = NEXT.fetch_add(1, Ordering::Relaxed);
+   ctx.userdata::<Registry<'js>>()
+      .ok_or_else(|| Exception::throw_internal(ctx, "no registry"))?
+      .pending
+      .borrow_mut()
+      .insert(id, (owner.to_owned(), resolve, reject));
+   Ok((promise, id))
+}
+
+/// Due times of the promises [`after`] returned, by id.
+static TIMERS: Mutex<BinaryHeap<Reverse<(Instant, u64)>>> = Mutex::new(BinaryHeap::new());
+static TIMER_WAKE: Condvar = Condvar::new();
+static TIMER_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// A promise that resolves to `null` after `delay`. One thread waits for every
+/// such promise, so plugins sleeping at once cost no thread each.
+pub fn after<'js>(
+   ctx: &Ctx<'js>,
+   owner: &str,
+   delay: Duration,
+) -> rquickjs::Result<rquickjs::Promise<'js>> {
+   // Started before the promise exists, so a thread that cannot start throws
+   // here rather than leaving a promise nothing settles.
+   if !TIMER_STARTED.swap(true, Ordering::AcqRel) {
+      let started = std::thread::Builder::new()
+         .name("phoenix-timers".to_owned())
+         .spawn(settle_due);
+      if let Err(err) = started {
+         TIMER_STARTED.store(false, Ordering::Release);
+         return Err(Exception::throw_message(
+            ctx,
+            &format!("timers: could not start their thread: {err}"),
+         ));
+      }
+   }
+   let (promise, id) = pending(ctx, owner)?;
+   let due = Instant::now().checked_add(delay).unwrap_or_else(Instant::now);
+   TIMERS
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner)
+      .push(Reverse((due, id)));
+   TIMER_WAKE.notify_one();
+   Ok(promise)
+}
+
+/// Settles each timer once it is due, waiting until the next one otherwise.
+fn settle_due() {
+   let mut timers = TIMERS.lock().unwrap_or_else(PoisonError::into_inner);
+   loop {
+      let now = Instant::now();
+      let mut due = Vec::new();
+      while let Some(&Reverse((at, id))) = timers.peek()
+         && at <= now
+      {
+         timers.pop();
+         due.push(id);
+      }
+      if !due.is_empty() {
+         drop(timers);
+         if let Some(engine) = crate::engine() {
+            for id in due {
+               engine.settle(id, Settlement::Json(Ok(None)));
+            }
+         }
+         timers = TIMERS.lock().unwrap_or_else(PoisonError::into_inner);
+         continue;
+      }
+      timers = match timers.peek() {
+         Some(&Reverse((at, _))) => {
+            TIMER_WAKE
+               .wait_timeout(timers, at.saturating_duration_since(now))
+               .unwrap_or_else(PoisonError::into_inner)
+               .0
+         },
+         None => TIMER_WAKE.wait(timers).unwrap_or_else(PoisonError::into_inner),
+      };
+   }
 }

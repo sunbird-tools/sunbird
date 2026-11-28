@@ -92,6 +92,7 @@ use crate::{
       self,
       Notice,
    },
+   server_tooltip,
    shortcuts,
    sidebar,
    spotify::{
@@ -362,6 +363,112 @@ fn evaluate_decorations_in_ctx<'js>(
 /// Evaluates every decoration registered for `place` with `user_id`.
 pub fn render_decorations(engine: &Engine, place: Place, user_id: u64) -> Vec<RenderedAccessory> {
    engine.with(|ctx| evaluate_decorations_in_ctx(&ctx, place, user_id))
+}
+
+/// Calls every `addServerTooltip` render with `guild_id`: each returns one
+/// piece or a list of them, which make one row, rows by priority.
+fn evaluate_server_tooltips_in_ctx(ctx: &Ctx<'_>, guild_id: u64) -> Vec<Vec<crate::gpui::Piece>> {
+   let Some(registry) = ctx.userdata::<Desktop<'_>>() else {
+      return Vec::new();
+   };
+   let snapshot = registry.server_tooltips.borrow().clone();
+   drop(registry);
+
+   let mut rows = Vec::new();
+   for tooltip in &snapshot {
+      // Each render gets its own, so one changing it never misleads the next.
+      let Ok(arg) = Object::new(ctx.clone()) else {
+         break;
+      };
+      let _ = arg.set("guildId", guild_id.to_string());
+      let val = match tooltip.render.call::<_, Value<'_>>((arg,)).catch(ctx) {
+         Ok(val) => val,
+         Err(err) => {
+            log::error!("[{}] addServerTooltip render: {err}", tooltip.plugin);
+            continue;
+         },
+      };
+      let pieces = val.as_array().map_or_else(
+         || {
+            parse_rendered(&val, tooltip.priority)
+               .map(|item| item.piece())
+               .into_iter()
+               .collect::<Vec<_>>()
+         },
+         |list| {
+            list
+               .iter::<Value<'_>>()
+               .filter_map(Result::ok)
+               .filter_map(|item| parse_rendered(&item, tooltip.priority))
+               .map(|item| item.piece())
+               .collect::<Vec<_>>()
+         },
+      );
+      if !pieces.is_empty() {
+         rows.push((tooltip.priority, pieces));
+      }
+   }
+   rows.sort_by_key(|&(priority, _)| priority);
+   rows.into_iter().map(|(_, pieces)| pieces).collect()
+}
+
+/// What every `addServerTooltip` adds to `guild_id`'s tooltip.
+pub fn render_server_tooltip(engine: &Engine, guild_id: u64) -> Vec<Vec<crate::gpui::Piece>> {
+   engine.with(|ctx| evaluate_server_tooltips_in_ctx(&ctx, guild_id))
+}
+
+/// `addServerTooltip`: rows at the bottom of a server's tooltip.
+fn add_server_tooltip<'js>(
+   ctx: &Ctx<'js>,
+   plugin: &str,
+   options: &Object<'js>,
+) -> rquickjs::Result<Function<'js>> {
+   static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+   let render = options.get::<_, Function<'js>>("render")?;
+   let priority = options.get::<_, Option<i32>>("priority")?.unwrap_or(0);
+   let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+   let count = {
+      let registry = ctx
+         .userdata::<Desktop<'js>>()
+         .ok_or_else(|| Exception::throw_internal(ctx, "no registry"))?;
+      let mut list = registry.server_tooltips.borrow_mut();
+      list.push(DesktopMember {
+         id,
+         plugin: plugin.to_owned(),
+         priority,
+         render,
+      });
+      list.len()
+   };
+   server_tooltip::set_active_count(count);
+   server_tooltip::clear_cache();
+
+   let remove = Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
+      if let Some(registry) = ctx.userdata::<Desktop<'js>>() {
+         let mut list = registry.server_tooltips.borrow_mut();
+         list.retain(|entry| entry.id != id);
+         server_tooltip::set_active_count(list.len());
+         server_tooltip::clear_cache();
+      }
+   })?;
+   remove.set(
+      "update",
+      Function::new(ctx.clone(), move |ctx: Ctx<'js>, guild_id: Opt<String>| {
+         if let Some(guild) = guild_id.0.and_then(|s| s.parse::<u64>().ok()) {
+            let generation = server_tooltip::generation();
+            let rows = evaluate_server_tooltips_in_ctx(&ctx, guild);
+            server_tooltip::set_rendered(guild, rows, generation);
+         } else {
+            server_tooltip::clear_cache();
+         }
+      })?,
+   )?;
+   remove.set(
+      "shown",
+      Function::new(ctx.clone(), || server_tooltip::shown().map(|guild| guild.to_string()))?,
+   )?;
+   Ok(remove)
 }
 
 /// `addMemberDecoration` and `addMessageHeaderDecoration`, which differ only
@@ -1820,6 +1927,14 @@ pub fn desktop_ui_object<'js>(ctx: &Ctx<'js>, plugin: &str) -> rquickjs::Result<
          })?,
       )?;
    }
+
+   let tooltip_owner = plugin.to_owned();
+   ui.set(
+      "addServerTooltip",
+      Function::new(ctx.clone(), move |ctx: Ctx<'js>, options: Object<'js>| {
+         add_server_tooltip(&ctx, &tooltip_owner, &options)
+      })?,
+   )?;
 
    let action_owner = plugin.to_owned();
    ui.set(

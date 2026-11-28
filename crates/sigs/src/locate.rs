@@ -67,6 +67,12 @@ pub mod ready;
    target_os = "macos",
    all(target_os = "linux", target_arch = "aarch64")
 ))]
+pub mod server_tooltip;
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod settings;
 pub mod spotify;
 pub mod staff;
@@ -541,6 +547,23 @@ pub const LOCATORS: &[Locator] = &[
             .map(|tally| hookable(ix, tally))
             .collect::<Found<Vec<String>>>()
             .map(|tallies| tallies.join(", "))
+      },
+   },
+   #[cfg(any(
+      target_arch = "x86_64",
+      target_os = "macos",
+      all(target_os = "linux", target_arch = "aarch64")
+   ))]
+   Locator {
+      name:     "server tooltip",
+      families: DESKTOP,
+      run:      |ix| {
+         let found = server_tooltip::tooltip(ix)?;
+         Ok(format!(
+            "render {}, server id at self+{:#x}",
+            hookable(ix, found.render)?,
+            found.guild
+         ))
       },
    },
    #[cfg(any(

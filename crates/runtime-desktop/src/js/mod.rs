@@ -42,6 +42,7 @@ use crate::{
       },
    },
    members::Place,
+   server_tooltip,
    shortcuts,
    sidebar,
    spotify::{
@@ -62,6 +63,8 @@ pub struct Desktop<'js> {
    pub members:          RefCell<Vec<DesktopMember<'js>>>,
    /// `phoenix.ui.addMessageHeaderDecoration` callbacks.
    pub headers:          RefCell<Vec<DesktopMember<'js>>>,
+   /// `phoenix.ui.addServerTooltip` callbacks.
+   pub server_tooltips:  RefCell<Vec<DesktopMember<'js>>>,
    /// `phoenix.ui.addMessageAction` callbacks.
    pub actions:          RefCell<Vec<DesktopAction<'js>>>,
    /// Active `phoenix.ui.openPage` button callbacks, keyed by button ID.
@@ -110,10 +113,23 @@ unsafe impl<'js> JsLifetime<'js> for Desktop<'js> {
    type Changed<'to> = Desktop<'to>;
 }
 
-/// Drops the accessories, member decorations, context menu actions, open page
-/// callbacks, banners, emoji pick handlers, hidden counts, call idle holds,
-/// sidebar collapses, header and composer buttons and shortcuts `name`
-/// registered and redraws Discord without them.
+/// Drops the server tooltip lines `name` added, and repaints the tooltip on
+/// screen without them.
+fn unload_server_tooltips(registry: &Desktop<'_>, name: &str) {
+   let mut tooltips = registry.server_tooltips.borrow_mut();
+   let before = tooltips.len();
+   tooltips.retain(|entry| entry.plugin != name);
+   if tooltips.len() != before {
+      server_tooltip::set_active_count(tooltips.len());
+      server_tooltip::clear_cache();
+   }
+}
+
+/// Drops the accessories, member decorations, server tooltip lines, context
+/// menu actions, open page callbacks, banners, emoji pick handlers, hidden
+/// counts, call idle holds, sidebar collapses, header and composer buttons and
+/// shortcuts `name` registered and redraws Discord without them.
+#[expect(clippy::too_many_lines, reason = "one cleanup per kind of registration")]
 pub fn unload(ctx: &Ctx<'_>, name: &str) {
    let Some(registry) = ctx.userdata::<Desktop<'_>>() else {
       return;
@@ -127,6 +143,8 @@ pub fn unload(ctx: &Ctx<'_>, name: &str) {
       accessories::invalidate_discord_windows();
    }
    drop(list);
+
+   unload_server_tooltips(&registry, name);
 
    for place in [Place::Members, Place::Headers] {
       let mut decorations = registry.decorations(place).borrow_mut();
