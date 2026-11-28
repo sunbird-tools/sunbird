@@ -36,6 +36,7 @@ use crate::settings::{
    rows::{
       InputKind,
       button_row,
+      icon_row,
       section,
       switch_row,
       text_field,
@@ -356,4 +357,30 @@ pub fn install_sections(status: Option<&(String, i64)>, plugins: &[PluginInfo]) 
       sections.push(section("", vec![line]));
    }
    sections
+}
+
+/// Discord's alternate launcher icons, laid out like its own App Icon page.
+pub fn icons_sections() -> Vec<Tree> {
+   let current = phoenix_runtime::app_icon();
+   let row = |(index, icon): (usize, &crate::icons::LauncherIcon)| {
+      icon_row(
+         icon.label,
+         &crate::icons::preview(icon.resource),
+         icon.id == current,
+         Press::ChooseIcon(index),
+      )
+   };
+   let limited = crate::icons::ICONS
+      .iter()
+      .enumerate()
+      .filter(|(_, icon)| icon.id == "HexagonIcon")
+      .map(row)
+      .collect();
+   let regular = crate::icons::ICONS
+      .iter()
+      .enumerate()
+      .filter(|(_, icon)| icon.id != "HexagonIcon")
+      .map(row)
+      .collect();
+   vec![section("Limited Time", limited), section("", regular)]
 }

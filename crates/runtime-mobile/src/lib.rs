@@ -11,6 +11,7 @@ mod discord;
 #[cfg(target_os = "android")] mod fetch;
 #[cfg(target_os = "ios")] mod foundation;
 mod host;
+mod icons;
 #[cfg(target_os = "android")] mod install;
 mod js;
 #[cfg(target_os = "android")] mod jvm;

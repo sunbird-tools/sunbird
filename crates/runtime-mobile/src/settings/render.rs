@@ -30,6 +30,7 @@ use crate::settings::{
       log_lines,
    },
    pages::{
+      icons_sections,
       install_sections,
       main_sections,
    },
@@ -259,6 +260,7 @@ impl Settings {
             ops
          },
          Job::Press(Press::OpenPlugin(index)) => self.open_page(PageKind::Plugin(index)),
+         Job::Press(Press::OpenIcons) => self.open_page(PageKind::Icons),
          Job::Press(Press::OpenInstall) => {
             self.install_status = None;
             self.open_page(PageKind::Install)
@@ -269,6 +271,7 @@ impl Settings {
             press @ (Press::Toggle(_)
             | Press::Setting(..)
             | Press::Choose(..)
+            | Press::ChooseIcon(..)
             | Press::ToggleStaff
             | Press::ToggleRemoteShell),
          ) => self.rerender_all(Some(press)),
@@ -297,6 +300,7 @@ impl Settings {
       match kind {
          PageKind::Main => (TITLE.to_owned(), main_sections(&self.plugins)),
          PageKind::Console => ("Console".to_owned(), console_sections()),
+         PageKind::Icons => ("App Icon".to_owned(), icons_sections()),
          PageKind::Install => {
             (
                "Install plugin".to_owned(),

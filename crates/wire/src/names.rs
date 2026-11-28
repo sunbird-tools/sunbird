@@ -14,10 +14,11 @@ pub enum Method {
    MediaPickerRelease,
    TimingSet,
    AppStateSetTheme,
+   AppIconSet,
 }
 
 impl Method {
-   pub const ALL: [Self; 9] = [
+   pub const ALL: [Self; 10] = [
       Self::NetworkingRequest,
       Self::LinkingOpenUrl,
       Self::SystemOverlayToast,
@@ -27,6 +28,7 @@ impl Method {
       Self::MediaPickerRelease,
       Self::TimingSet,
       Self::AppStateSetTheme,
+      Self::AppIconSet,
    ];
 
    #[must_use]
@@ -41,6 +43,7 @@ impl Method {
          Self::MediaPickerRelease => "MediaPicker.release",
          Self::TimingSet => "Timing.set",
          Self::AppStateSetTheme => "AppState.setTheme",
+         Self::AppIconSet => "AppIcon.set",
       }
    }
 
@@ -101,10 +104,11 @@ pub enum Field {
    TextMuted,
    Ripple,
    Danger,
+   Req,
 }
 
 impl Field {
-   pub const ALL: [Self; 22] = [
+   pub const ALL: [Self; 23] = [
       Self::Id,
       Self::Error,
       Self::Method,
@@ -127,6 +131,7 @@ impl Field {
       Self::TextMuted,
       Self::Ripple,
       Self::Danger,
+      Self::Req,
    ];
 
    #[must_use]
@@ -154,6 +159,7 @@ impl Field {
          Self::TextMuted => "textMuted",
          Self::Ripple => "ripple",
          Self::Danger => "danger",
+         Self::Req => "req",
       }
    }
 }

@@ -80,6 +80,7 @@ const ICON_RELOAD: &str = "res://ic_mana_puzzle_piece_retry";
 const ICON_UNINSTALL: &str = "res://ic_mana_puzzle_piece_minus";
 const ICON_CONSOLE: &str = "res://ic_mana_angle_brackets";
 const ICON_FILE: &str = "res://ic_mana_image_file_up";
+const ICON_PAINT: &str = "res://ic_mana_paintbrush_thick";
 /// Plugins are named by their index in [`phoenix_runtime::plugins`] as of the
 /// last render, which every install follows with a fresh one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +88,7 @@ enum Press {
    OpenMain,
    OpenConsole,
    OpenInstall,
+   OpenIcons,
    OpenPlugin(usize),
    /// A plugin's code page, and saving what it holds.
    EditCode(usize),
@@ -102,6 +104,7 @@ enum Press {
    Setting(usize, usize),
    /// Option `option` of a plugin's select setting.
    Choose(usize, usize, usize),
+   ChooseIcon(usize),
    /// Apply the pending update in-app (OTA plugins / APK self-updater).
    ApplyUpdate,
    /// The site, to get the update [`crate::update`] found.
@@ -121,6 +124,7 @@ enum PageKind {
    Main,
    Console,
    Install,
+   Icons,
    Plugin(usize),
    Code(usize),
    DiscordUpdate,
