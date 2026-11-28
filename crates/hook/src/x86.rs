@@ -133,6 +133,22 @@ fn leaf_end(image: &Image<'_>, func: usize) -> Option<usize> {
    None
 }
 
+/// Whether `code` at `ip` can run unchanged after it is copied elsewhere.
+pub fn relocatable(code: &[u8], ip: usize) -> bool {
+   let mut decoder = Decoder::with_ip(64, code, ip as u64, DecoderOptions::NONE);
+   let mut instruction = Instruction::default();
+   while decoder.can_decode() {
+      decoder.decode_out(&mut instruction);
+      if instruction.is_invalid()
+         || instruction.is_ip_rel_memory_operand()
+         || instruction.flow_control() != FlowControl::Next
+      {
+         return false;
+      }
+   }
+   true
+}
+
 /// Up to `count` instructions decoded from `code`, which starts at `ip`. Stops
 /// early at bytes that do not decode.
 #[must_use]

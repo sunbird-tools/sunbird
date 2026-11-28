@@ -871,6 +871,7 @@ pub(crate) mod win32 {
          new_protect: u32,
          old_protect: *mut u32,
       ) -> i32;
+      pub fn FlushInstructionCache(process: *mut c_void, addr: *const c_void, size: usize) -> i32;
       pub fn K32EnumProcessModules(
          process: *mut c_void,
          modules: *mut *mut c_void,
@@ -1132,6 +1133,115 @@ impl Image<'static> {
       unsafe { self.swap_words(&writes) }.map(drop)
    }
 
+}
+
+/// Hooks `addr` in any mapped module, including a system DLL export, and stores
+/// the trampoline in `ready` before the jump is written.
+///
+/// A leading `jmp [rip]` stub is followed once. The detour may run as soon as
+/// the jump is written, so it has to load `ready` itself.
+///
+/// # Safety
+///
+/// `detour` has the function's exact ABI. `addr` is the start of a mapped
+/// function, and no thread runs its first bytes while they are written.
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub unsafe fn hook_foreign(
+   addr: usize,
+   detour: usize,
+   ready: &std::sync::atomic::AtomicUsize,
+) -> Result<(), crate::Error> {
+   // SAFETY: forwarded from the caller.
+   unsafe { hook_foreign_at(addr, detour, ready, 0) }
+}
+
+/// Writes an absolute jump over a relocatable prologue at `addr`.
+///
+/// # Safety
+///
+/// Same contract as [`hook_foreign`]. `depth` is 1 after one stub jump.
+#[cfg(all(windows, target_arch = "x86_64"))]
+unsafe fn hook_foreign_at(
+   addr: usize,
+   detour: usize,
+   ready: &std::sync::atomic::AtomicUsize,
+   depth: u8,
+) -> Result<(), crate::Error> {
+   let refuse = |message: &str| {
+      crate::Error::Attach {
+         backend: "inline",
+         target:  addr,
+         message: message.to_owned(),
+      }
+   };
+   let mut bytes = [0u8; 16];
+   // SAFETY: `addr` is mapped executable code the caller named.
+   unsafe { std::ptr::copy_nonoverlapping(addr as *const u8, bytes.as_mut_ptr(), bytes.len()) };
+   if depth == 0 && bytes[0] == 0xFF && bytes[1] == 0x25 {
+      let disp = i32::from_le_bytes([bytes[2], bytes[3], bytes[4], bytes[5]]);
+      let offset = isize::try_from(i64::from(disp) + 6).unwrap_or(0);
+      let slot = addr.wrapping_add_signed(offset);
+      // SAFETY: the stub's operand is a mapped pointer-sized slot.
+      let next = unsafe { std::ptr::read_unaligned(slot as *const usize) };
+      if next != 0 && next != addr {
+         // SAFETY: `next` is the stub's target, still under the caller's contract.
+         return unsafe { hook_foreign_at(next, detour, ready, 1) };
+      }
+   }
+   let lines = crate::x86::disasm(&bytes, addr, 8);
+   let mut covered = 0usize;
+   for line in &lines {
+      covered = covered.saturating_add(line.len);
+      if covered >= ABSOLUTE_JUMP_LEN {
+         break;
+      }
+   }
+   if covered < ABSOLUTE_JUMP_LEN || covered > bytes.len() {
+      return Err(refuse("the prologue is too short to hook"));
+   }
+   if !crate::x86::relocatable(&bytes[..covered], addr) {
+      return Err(refuse("the prologue does not move"));
+   }
+   let mut code = bytes[..covered].to_vec();
+   code.extend(absolute_jump(addr + covered));
+   let trampoline =
+      alloc_exec(0, code.len()).ok_or_else(|| refuse("no memory for the trampoline"))?;
+   // SAFETY: `trampoline` holds `code.len()` fresh writable bytes.
+   unsafe { std::ptr::copy_nonoverlapping(code.as_ptr(), trampoline as *mut u8, code.len()) };
+   ready.store(trampoline, std::sync::atomic::Ordering::Release);
+   let jump = absolute_jump(detour);
+   let _guard = PROTECT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+   let mut old = 0u32;
+   // SAFETY: `addr` covers `covered` executable bytes, and `covered` fits the jump.
+   let writable = unsafe {
+      win32::VirtualProtect(
+         addr as *mut c_void,
+         covered,
+         win32::PAGE_EXECUTE_READWRITE,
+         &raw mut old,
+      )
+   };
+   if writable == 0 {
+      ready.store(0, std::sync::atomic::Ordering::Release);
+      return Err(refuse("the page could not be made writable"));
+   }
+   // SAFETY: the page is writable for the jump and no thread is in those bytes.
+   unsafe { std::ptr::copy_nonoverlapping(jump.as_ptr(), addr as *mut u8, jump.len()) };
+   let mut ignored = 0u32;
+   // SAFETY: restoring the protection recorded above. The jump stays in place.
+   unsafe {
+      win32::VirtualProtect(addr as *mut c_void, covered, old, &raw mut ignored);
+      win32::FlushInstructionCache(
+         win32::GetCurrentProcess(),
+         addr as *const c_void,
+         covered,
+      );
+   }
+   Ok(())
+}
+
+#[cfg(any(unix, windows))]
+impl Image<'static> {
    /// Refuses, since the call-site hook only rewrites x86 calls. The macOS
    /// runtime never reaches it.
    ///
