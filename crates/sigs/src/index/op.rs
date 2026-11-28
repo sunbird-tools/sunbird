@@ -14,7 +14,11 @@ use phoenix_hook::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Isa {
    /// Windows and Linux Desktop. Win64 when `pdata` is set, System V otherwise.
-   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   #[cfg(any(
+      target_arch = "x86_64",
+      target_os = "macos",
+      all(target_os = "linux", target_arch = "aarch64")
+   ))]
    X86_64 { win64: bool },
    /// macOS Desktop, iOS and Android arm64-v8a.
    Aarch64,
@@ -42,14 +46,30 @@ impl Isa {
    /// pointer not counted.
    #[must_use]
    pub const fn arg(self, index: usize) -> Option<Reg> {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       const SYSV: [Reg; 6] = [7, 6, 2, 1, 8, 9];
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       const WIN64: [Reg; 4] = [1, 2, 8, 9];
       let table: &[Reg] = match self {
-         #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+         #[cfg(any(
+            target_arch = "x86_64",
+            target_os = "macos",
+            all(target_os = "linux", target_arch = "aarch64")
+         ))]
          Self::X86_64 { win64: true } => &WIN64,
-         #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+         #[cfg(any(
+            target_arch = "x86_64",
+            target_os = "macos",
+            all(target_os = "linux", target_arch = "aarch64")
+         ))]
          Self::X86_64 { win64: false } => &SYSV,
          Self::Aarch64 => &[0, 1, 2, 3, 4, 5, 6, 7],
          Self::Thumb2 => &[0, 1, 2, 3],
@@ -79,7 +99,11 @@ impl Isa {
    #[must_use]
    pub const fn sp(self) -> Reg {
       match self {
-         #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+         #[cfg(any(
+            target_arch = "x86_64",
+            target_os = "macos",
+            all(target_os = "linux", target_arch = "aarch64")
+         ))]
          Self::X86_64 { .. } => 4,
          Self::Aarch64 => 31,
          Self::Thumb2 => 13,
@@ -91,10 +115,18 @@ impl Isa {
    pub const fn caller_saved(self) -> u32 {
       match self {
          // rax, rcx, rdx, rsi, rdi, r8 to r11.
-         #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+         #[cfg(any(
+            target_arch = "x86_64",
+            target_os = "macos",
+            all(target_os = "linux", target_arch = "aarch64")
+         ))]
          Self::X86_64 { win64: false } => 0x0FC7,
          // rax, rcx, rdx, r8 to r11.
-         #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+         #[cfg(any(
+            target_arch = "x86_64",
+            target_os = "macos",
+            all(target_os = "linux", target_arch = "aarch64")
+         ))]
          Self::X86_64 { win64: true } => 0x0F07,
          // x0 to x18 and the link register.
          Self::Aarch64 => 0x4007_FFFF,
@@ -113,9 +145,17 @@ impl Isa {
    #[must_use]
    pub const fn sret(self) -> Reg {
       match self {
-         #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+         #[cfg(any(
+            target_arch = "x86_64",
+            target_os = "macos",
+            all(target_os = "linux", target_arch = "aarch64")
+         ))]
          Self::X86_64 { win64: true } => 1,
-         #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+         #[cfg(any(
+            target_arch = "x86_64",
+            target_os = "macos",
+            all(target_os = "linux", target_arch = "aarch64")
+         ))]
          Self::X86_64 { win64: false } => 7,
          Self::Aarch64 => 8,
          Self::Thumb2 => 0,
@@ -257,7 +297,11 @@ pub struct Step {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Native {
-   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   #[cfg(any(
+      target_arch = "x86_64",
+      target_os = "macos",
+      all(target_os = "linux", target_arch = "aarch64")
+   ))]
    X86(iced_x86::Mnemonic),
    Arm64(Insn),
    Thumb(u32),
@@ -274,7 +318,11 @@ pub fn decode_head(image: &Image<'_>, isa: Isa, start: usize, end: usize, limit:
       return Vec::new();
    };
    let mut steps = match isa {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Isa::X86_64 { .. } => return x86(image, code, start, limit),
       Isa::Aarch64 => aarch64(&code[..code.len().min(limit.saturating_mul(4))], start),
       Isa::Thumb2 => crate::index::thumb::decode(image, code, start),
@@ -283,7 +331,11 @@ pub fn decode_head(image: &Image<'_>, isa: Isa, start: usize, end: usize, limit:
    steps
 }
 
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 #[allow(
    clippy::too_many_lines,
    clippy::cast_possible_truncation,
@@ -691,6 +743,12 @@ fn aarch64(code: &[u8], pc: usize) -> Vec<Step> {
             Op::Branch(target)
          },
          Insn::Ret => Op::Ret,
+         Insn::LdAdd { rn, .. } => {
+            Op::Atomic {
+               base:   rn,
+               offset: 0,
+            }
+         },
          // Load/store exclusive, CAS and the LSE read-modify-writes.
          Insn::Other(word)
             if word & 0x3F00_0000 == 0x0800_0000 || word & 0x3F20_0C00 == 0x3820_0000 =>

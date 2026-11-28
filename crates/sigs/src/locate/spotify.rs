@@ -60,7 +60,11 @@ pub fn auto_pause(ix: &Index<'_>) -> Found<CodePatch> {
       }
    }
    match ix.isa {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Isa::X86_64 { .. } => CodePatch::at(ix, func.start, &[0xC3]),
       Isa::Aarch64 => CodePatch::at(ix, func.start, &ARM64_RET),
       Isa::Thumb2 => Err(NO_THUMB.into()),
@@ -111,7 +115,11 @@ pub fn idle_activity(ix: &Index<'_>) -> Found<CodePatch> {
    let state = arg_after_return_slot(ix.isa, 0).ok_or("no state argument register")?;
    let shown = arg_after_return_slot(ix.isa, 4);
    let candidates = match ix.isa {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Isa::X86_64 { win64 } => {
          ix.image
             .scan(Pattern::new("?? 85 ?? 0F 94 ??"))
@@ -135,7 +143,11 @@ pub fn idle_activity(ix: &Index<'_>) -> Found<CodePatch> {
       .collect::<Vec<_>>();
    let site = crate::one("spotify idle flag", &sites)?;
    match ix.isa {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Isa::X86_64 { .. } => CodePatch::at(ix, site + 1, &[0x39]),
       Isa::Thumb2 => Err(NO_THUMB.into()),
       Isa::Aarch64 => {
@@ -152,7 +164,11 @@ pub fn idle_activity(ix: &Index<'_>) -> Found<CodePatch> {
 /// which x86-64 passes first and arm64 in `x8`.
 const fn arg_after_return_slot(isa: Isa, index: usize) -> Option<Reg> {
    match isa {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Isa::X86_64 { .. } => isa.arg(index + 1),
       Isa::Aarch64 | Isa::Thumb2 => isa.arg(index),
    }
@@ -218,7 +234,11 @@ mod arm64 {
    }
 }
 
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 mod x86 {
    use iced_x86::{
       Decoder,

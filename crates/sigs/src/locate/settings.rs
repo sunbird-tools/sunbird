@@ -130,7 +130,11 @@ pub fn settings_visibility(ix: &Index<'_>) -> Found<Vec<VisibilityGuard>> {
 /// `sub w, w, #imm`.
 fn subtracts(ix: &Index<'_>, step: &Step) -> Option<(Reg, u64)> {
    match step.native {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Native::X86(iced_x86::Mnemonic::Lea) => {
          let code = ix.image.read(step.at, usize::from(step.len))?;
          let insn = iced_x86::Decoder::with_ip(64, code, step.at as u64, 0).decode();
@@ -170,7 +174,11 @@ pub fn settings_section(ix: &Index<'_>) -> Found<Section> {
    // The hidden return pointer takes the first argument register on x86-64
    // and x8 on arm64, so `self` arrives second or first.
    let this = match ix.isa {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Isa::X86_64 { .. } => ix.isa.arg(1),
       Isa::Aarch64 | Isa::Thumb2 => ix.isa.arg(0),
    }
@@ -513,7 +521,11 @@ fn mana_icon(ix: &Index<'_>, name: &str) -> Found<u16> {
 /// The pointer an x86 `call [rip + slot]` goes through.
 fn call_slot(ix: &Index<'_>, step: &Step) -> Option<usize> {
    match step.native {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Native::X86(iced_x86::Mnemonic::Call) => {
          let code = ix.image.read(step.at, usize::from(step.len))?;
          let insn = iced_x86::Decoder::with_ip(64, code, step.at as u64, 0).decode();

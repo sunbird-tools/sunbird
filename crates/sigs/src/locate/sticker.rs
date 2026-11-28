@@ -68,7 +68,11 @@ pub fn locked_gates(ix: &Index<'_>) -> Found<[CodePatch; 2]> {
    }
    let [needs_nitro, no_select] = crate::one("sticker picker gates", &found)?;
    match ix.isa {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Isa::X86_64 { .. } => {
          Ok([
             x86_cond(ix, needs_nitro, 0x1)?,
@@ -132,7 +136,11 @@ fn gates(press: &Func<'_>) -> Option<[Step; 2]> {
 /// when `set`. x86-64 tests flags from the compare, arm64 bit 0 of `reg`.
 fn branches_on(branch: Step, reg: Option<Reg>, set: bool) -> bool {
    match (branch.native, reg) {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       (Native::X86(mnemonic), None) => {
          use iced_x86::Mnemonic;
          mnemonic == if set { Mnemonic::Jne } else { Mnemonic::Je }
@@ -152,7 +160,11 @@ fn branches_on(branch: Step, reg: Option<Reg>, set: bool) -> bool {
 
 /// The x86-64 conditional jump at `branch`, its condition nibble set to `cond`,
 /// in a short `7x` or near `0F 8x` encoding.
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 fn x86_cond(ix: &Index<'_>, branch: Step, cond: u8) -> Found<CodePatch> {
    match ix.image.read(branch.at, 2) {
       Some(&[0x0F, near]) if near & 0xF0 == 0x80 => {

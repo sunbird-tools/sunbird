@@ -260,6 +260,7 @@ mod tests {
    use std::borrow::Cow;
 
    use phoenix_hook::image::{
+      Format,
       Image,
       Segment,
    };
@@ -344,6 +345,7 @@ mod tests {
 
       let image = Image {
          path:            "Discord.exe".to_owned(),
+         format:          Format::Pe,
          build_id:        None,
          segments:        vec![
             Segment {
