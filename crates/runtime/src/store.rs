@@ -129,7 +129,8 @@ pub fn database(files: &Path) -> Result<PathBuf, StoreError> {
 }
 
 /// Desktop's `desktop.main_account`, the account switched to last.
-fn main_account(files: &Path) -> Option<String> {
+#[must_use]
+pub fn main_account(files: &Path) -> Option<String> {
    #[derive(serde::Deserialize)]
    struct Prefs {
       #[serde(rename = "desktop.main_account")]

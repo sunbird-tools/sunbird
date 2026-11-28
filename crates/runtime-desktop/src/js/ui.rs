@@ -519,6 +519,27 @@ fn cached_message_and_me(channel_id: u64, message_id: u64) -> (Option<String>, O
    (msg_json, me_id)
 }
 
+/// The channel and author of message `message_id`, and whether the current
+/// user wrote it, from the last menu's message or Phoenix's message cache.
+pub fn message_origin(message_id: u64) -> Option<(u64, u64, bool)> {
+   #[derive(serde::Deserialize)]
+   struct Author {
+      id: String,
+   }
+   #[derive(serde::Deserialize)]
+   struct Message {
+      channel_id: String,
+      author:     Author,
+   }
+   let (cached, me) = cached_message_and_me(0, message_id);
+   let json = context_menu::menu_message(message_id).or(cached)?;
+   let message: Message = serde_json::from_str(&json).ok()?;
+   Some((
+      message.channel_id.parse().ok()?,
+      message.author.id.parse().ok()?,
+      me.as_deref() == Some(message.author.id.as_str()),
+   ))
+}
 fn build_message_context<'js>(
    ctx: &Ctx<'js>,
    message_id: u64,

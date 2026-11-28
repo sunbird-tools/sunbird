@@ -56,10 +56,14 @@ impl Engine {
                   .and_then(|json| ctx.json_parse(json))
                   .map(Ok)
             },
-            Settlement::Json(Ok(Some(json))) => ctx.json_parse(json).map(Ok),
+            Settlement::Json(Ok(Some(json))) | Settlement::Command(Ok(json)) => {
+               ctx.json_parse(json).map(Ok)
+            },
             Settlement::Json(Ok(None)) => Ok(Ok(Value::new_null(ctx.clone()))),
             Settlement::Fetch(Err(err)) => Ok(Err(err.to_string())),
-            Settlement::Discord(Err(err)) | Settlement::Text(Err(err)) => Ok(Err(err.to_string())),
+            Settlement::Discord(Err(err))
+            | Settlement::Text(Err(err))
+            | Settlement::Command(Err(err)) => Ok(Err(err.to_string())),
             Settlement::Rows(Err(err)) | Settlement::Json(Err(err)) => Ok(Err(err.to_string())),
          };
          let outcome = value.and_then(|value| {
@@ -85,6 +89,8 @@ pub enum Settlement {
    Int(Result<i32, String>),
    Rows(Result<store::Rows, store::StoreError>),
    Json(Result<Option<String>, store::StoreError>),
+   /// A command's `ok` value as JSON.
+   Command(Result<String, discord::DiscordError>),
 }
 
 /// Runs `work` on its own thread and returns a promise it settles. The

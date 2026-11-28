@@ -162,9 +162,41 @@ fn allow(
    ))
 }
 
-/// `phoenix.discord`, Discord's API on the app's own client and session:
-/// `request(path, init)`, `get` and `delete(path, init)`, `post`, `put` and
-/// `patch(path, body, init)`, and `onRequest(filter, handler)`.
+/// `phoenix.discord.command(name, args)`, one of the client's named commands.
+fn add_command<'js>(
+   ctx: &Ctx<'js>,
+   plugin: &str,
+   object: &Object<'js>,
+   permissions: &Arc<Permissions>,
+) -> rquickjs::Result<()> {
+   let granted = Arc::clone(permissions);
+   let owner = plugin.to_owned();
+   object.set(
+      "command",
+      Function::new(
+         ctx.clone(),
+         move |ctx: Ctx<'js>, name: String, args: Opt<Object<'js>>| {
+            allow(&ctx, &granted, "command", &name)?;
+            let args = match args.0 {
+               Some(args) => {
+                  ctx.json_stringify(args)?
+                     .map_or_else(|| Ok("{}".to_owned()), |json| json.to_string())?
+               },
+               None => "{}".to_owned(),
+            };
+            in_background(&ctx, &owner, move || {
+               Settlement::Command(discord::command(&name, &args))
+            })
+         },
+      )?,
+   )
+}
+
+/// `phoenix.discord`, Discord's API on the app's own client and session.
+///
+/// It has `request(path, init)`, `get` and `delete(path, init)`, `post`, `put`
+/// and `patch(path, body, init)`, `command(name, args)`, and
+/// `onRequest(filter, handler)`.
 pub fn discord_object<'js>(
    ctx: &Ctx<'js>,
    plugin: &str,
@@ -213,6 +245,7 @@ pub fn discord_object<'js>(
          })
       })?,
    )?;
+   add_command(ctx, plugin, &object, permissions)?;
    let granted = Arc::clone(permissions);
    let owner = plugin.to_owned();
    object.set(

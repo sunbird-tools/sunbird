@@ -1218,6 +1218,12 @@ declare namespace Phoenix {
     ): Remover;
     /// The signed-in user from the app's cache, or null before the first login has synced.
     me(): Promise<CurrentUser | null>;
+    /// Runs one of the client's own named commands with `args`, against its live stores, and
+    /// resolves to the command's result: `command("list_guilds")`, `command("get_pending_reply",
+    /// { channel_id })`. Names and argument names are libdiscord's (`"hello"` lists them). Desktop
+    /// only; elsewhere, and for commands that wait on the network, it rejects with why. Many
+    /// commands act as the account (send, delete, ban), so treat it like `post`.
+    command<T = unknown>(name: string, args?: Record<string, unknown>): Promise<T>;
     request(path: string, init?: FetchInit): Promise<FetchResponse>;
     get(path: string, init?: FetchInit): Promise<FetchResponse>;
     delete(path: string, init?: FetchInit): Promise<FetchResponse>;

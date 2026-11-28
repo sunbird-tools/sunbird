@@ -10,6 +10,8 @@ pub mod chat;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod clickable;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+pub mod commands;
+#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod composer;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod counts;
@@ -152,6 +154,18 @@ pub const LOCATORS: &[Locator] = &[
       name:     "clickable",
       families: DESKTOP,
       run:      |ix| clickable::clickable(ix).map(|found| format!("{found:x?}")),
+   },
+   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   Locator {
+      name:     "commands",
+      families: DESKTOP,
+      run:      |ix| commands::commands(ix).map(|found| format!("{found:x?}")),
+   },
+   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   Locator {
+      name:     "client new",
+      families: DESKTOP,
+      run:      |ix| commands::client_new(ix).map(|func| format!("{func:#x}")),
    },
    Locator {
       name:     "staff flag",

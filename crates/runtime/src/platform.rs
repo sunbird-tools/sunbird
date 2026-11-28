@@ -64,6 +64,12 @@ pub trait Platform: Sync {
    /// Opens Phoenix's `OAuth2` authorize flow and returns the redirect URL.
    fn authorize(&self, request: &Authorization) -> Result<String, DiscordError>;
 
+   /// Runs libdiscord's command `request` (`{"type": name, ...args}`) and
+   /// returns its JSON reply, on clients that have the command layer.
+   fn command(&self, _name: &str, _request: &str) -> Result<String, DiscordError> {
+      Err(DiscordError::NoCommands)
+   }
+
    /// Keeps the platform's own JS state in `ctx`'s userdata.
    fn init(&self, ctx: &Ctx<'_>) -> rquickjs::Result<()>;
 

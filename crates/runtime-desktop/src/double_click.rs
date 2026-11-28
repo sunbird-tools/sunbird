@@ -293,6 +293,10 @@ unsafe fn row_press(
       else {
          return;
       };
+      // Reply is a store command; edit mode only lives in the chat pane.
+      if item == "reply" && crate::client_commands::reply(message) {
+         return;
+      }
       if pane::run(&item, message, window, app) {
          return;
       }
