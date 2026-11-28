@@ -48,6 +48,12 @@ pub mod counts;
    target_os = "macos",
    all(target_os = "linux", target_arch = "aarch64")
 ))]
+pub mod dismiss_stack;
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod message;
 pub mod menu;
 #[cfg(any(

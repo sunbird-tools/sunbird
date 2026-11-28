@@ -234,6 +234,7 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
    feature("restart", || restart::install(&image));
    feature("staff", || staff::prepare(&ix));
    modal::install(&image);
+   feature("modal_dismiss", || modal::install_dismiss(&ix));
    let modal = require(modal::hooked(), "Workspace::render_overlays is not hooked");
    health::record("notices", health::Kind::Feature, modal.clone());
    critical("modal", modal);
