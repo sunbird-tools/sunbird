@@ -2684,6 +2684,7 @@ unsafe fn page_field(
          field.fresh = true;
       }
       let entity = field.entity;
+      drop(fields);
       (entity, refill)
    };
 
@@ -2708,6 +2709,7 @@ unsafe fn page_field(
       if fresh || changed {
          field.seen.clone_from(&text);
       }
+      drop(fields);
       changed
    };
 
