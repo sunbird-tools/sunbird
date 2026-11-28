@@ -1039,6 +1039,8 @@ declare namespace Phoenix {
     onUnload(cleanup: () => void): void;
     /// Reaches any host with `http`, and throws without it.
     fetch(url: string, init?: FetchInit): Promise<FetchResponse>;
+    /// Resolves after `ms` milliseconds, at most an hour. QuickJS has no `setTimeout`.
+    sleep(ms: number): Promise<void>;
     /// Discord's API through the app's own HTTP client, with the app's session headers. Paths are
     /// relative to the API base, like `/users/@me`. Rejects until the app has made a request of its
     /// own. Requests, `me`, `authorize` and interceptors need `discord`.
@@ -1513,6 +1515,18 @@ declare namespace Phoenix {
       priority?: number;
       render(ctx: { userId: string }): Rendered;
     }): Remover;
+    /// A row at the bottom of a server's tooltip in the server list, each piece side by side:
+    /// colored text, a little larger and bolder than the tooltip's own, or icons. Desktop only,
+    /// and absent on runtimes from before it. It runs once per server, off Discord's UI thread,
+    /// and what it returns is kept until `update(guildId)`. Return nothing to add no row.
+    addServerTooltip?(options: {
+      priority?: number;
+      render(ctx: { guildId: string }): Rendered | Rendered[];
+    }): Remover & {
+      /// The server whose tooltip is open, or null. Checked after a delay, it tells the server
+      /// the pointer stopped on from one it swept past or left.
+      shown?(): string | null;
+    };
     /// A row in the message long-press menu, above Delete. The menu closes on press.
     addMessageAction(options: {
       label: string;

@@ -69,7 +69,7 @@ pub type Regs = [Val; 32];
 
 /// A direct call, or one [`Op`] leaves as [`Op::Other`] since its target
 /// is only in a register or memory.
-const fn calls(step: &Step) -> bool {
+pub(crate) const fn calls(step: &Step) -> bool {
    match step.native {
       _ if matches!(step.op, Op::Call(_)) => true,
       #[cfg(any(
