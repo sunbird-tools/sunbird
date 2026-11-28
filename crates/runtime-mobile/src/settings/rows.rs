@@ -7,6 +7,7 @@ use phoenix_ui_mobile::{
       Spring,
       Worklet,
    },
+   prop,
    templates,
 };
 use phoenix_wire::Value;
@@ -97,6 +98,32 @@ pub fn select_row(label: &str, selected: bool, press: Press) -> Tree {
       }
    }
    root.set(Prop::ACCESSIBILITY_CHECKED, Some(Value::Bool(selected)));
+   root
+}
+
+/// A launcher-icon choice, laid out like Phoenix's own App Icon settings.
+pub fn icon_row(label: &str, resource: &str, selected: bool, press: Press) -> Tree {
+   let mut root = button_row(label, resource, Some(press), true);
+   root.set(Prop::ACCESSIBILITY_CHECKED, Some(Value::Bool(selected)));
+   if let Some(row) = root.kids.first_mut() {
+      if let Some(icon) = row.kids.get_mut(0) {
+         icon.set(Prop::TINT, None);
+         icon.set(prop!("width"), Some(Value::F64(36.0)));
+         icon.set(Prop::HEIGHT, Some(Value::F64(36.0)));
+         icon.set(Prop::RADIUS, Some(Value::F64(9.0)));
+      }
+      if let Some(radio) = row.kids.get_mut(2).and_then(|wrap| wrap.kids.first_mut()) {
+         let icon = if selected {
+            "res://btn_radio_on_mtrl"
+         } else {
+            "res://btn_radio_off_mtrl"
+         };
+         radio.set(Prop::URI, Some(text(icon)));
+         radio.set(Prop::TINT, None);
+         radio.set(prop!("width"), Some(Value::F64(20.0)));
+         radio.set(Prop::HEIGHT, Some(Value::F64(20.0)));
+      }
+   }
    root
 }
 

@@ -185,8 +185,10 @@ fn press(pressed: Press) {
          #[cfg(target_os = "android")]
          crate::discord_update::start();
       },
+      Press::ChooseIcon(index) => crate::icons::choose(index),
       Press::OpenMain
       | Press::OpenConsole
+      | Press::OpenIcons
       | Press::OpenPlugin(_)
       | Press::OpenDiscordUpdate
       | Press::Measure

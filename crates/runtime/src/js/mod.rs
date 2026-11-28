@@ -246,6 +246,8 @@ struct Choices<'a> {
    staff:        bool,
    #[serde(default)]
    remote_shell: bool,
+   #[serde(default)]
+   app_icon:     Option<String>,
 }
 
 impl Default for Choices<'_> {
@@ -256,6 +258,7 @@ impl Default for Choices<'_> {
          settings:     Cow::Owned(BTreeMap::new()),
          staff:        false,
          remote_shell: false,
+         app_icon:     None,
       }
    }
 }
@@ -710,6 +713,10 @@ impl Engine {
             settings: Cow::Borrowed(chosen.as_deref().unwrap_or(&empty)),
             staff: crate::staff_enabled(),
             remote_shell,
+            app_icon: crate::APP_ICON
+               .read()
+               .unwrap_or_else(std::sync::PoisonError::into_inner)
+               .clone(),
          })
       });
       let path = state().choices_path();
@@ -1048,6 +1055,10 @@ pub fn load_plugins(state: &'static State, bundled: Vec<Plugin>) -> Result<Vec<S
    };
    crate::STAFF.store(choices.staff, std::sync::atomic::Ordering::Release);
    crate::set_remote_shell_flag(choices.remote_shell);
+   crate::APP_ICON
+      .write()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .clone_from(&choices.app_icon);
    if let Some(platform) = crate::platform() {
       platform.staff(&state.image);
    }

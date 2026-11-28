@@ -11,8 +11,10 @@ use std::{
       PathBuf,
    },
    sync::{
+      LazyLock,
       Mutex,
       OnceLock,
+      RwLock,
       atomic::{
          AtomicBool,
          Ordering,
@@ -118,6 +120,8 @@ static PLATFORM: OnceLock<&'static dyn Platform> = OnceLock::new();
 /// Phoenix's Staff Settings page reads `(user.flags | flag_override) & 1`, and
 /// the platforms set that bit while this is on.
 static STAFF: AtomicBool = AtomicBool::new(false);
+/// The launcher icon id chosen in Settings, `None` for Discord's default.
+pub(crate) static APP_ICON: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
 
 /// The running runtime, once [`start`] published it.
 #[must_use]
@@ -338,6 +342,27 @@ pub fn staff_enabled() -> bool {
 /// Turns the staff unlock on or off and remembers the choice across restarts.
 pub fn set_staff_enabled(enabled: bool) {
    STAFF.store(enabled, Ordering::Release);
+   if let Some(engine) = engine() {
+      engine.save_choices();
+   }
+}
+
+/// The launcher icon id chosen in Settings.
+#[must_use]
+pub fn app_icon() -> String {
+   APP_ICON
+      .read()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .clone()
+      .unwrap_or_else(|| "AppIcon".to_owned())
+}
+
+/// Remembers the launcher icon chosen in Settings.
+pub fn set_app_icon(icon: &str) {
+   *APP_ICON
+      .write()
+      .unwrap_or_else(std::sync::PoisonError::into_inner) =
+      (icon != "AppIcon").then(|| icon.to_owned());
    if let Some(engine) = engine() {
       engine.save_choices();
    }
