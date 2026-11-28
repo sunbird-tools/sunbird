@@ -86,6 +86,13 @@ fn outlined_takes(ix: &Index<'_>, op: Op, base: Reg, offset: isize) -> bool {
    let Op::Call(target) = op else {
       return false;
    };
+   // Through a linker veneer too, on ELF builds.
+   if ix
+      .outlined(target, MOST)
+      .is_some_and(|stub| stub.iter().any(|step| takes_slot(step.op, base, offset)))
+   {
+      return true;
+   }
    ix.isa == Isa::Aarch64
       && ix.func(target).is_ok_and(|stub| {
          stub
@@ -125,37 +132,50 @@ pub fn idle_activity(ix: &Index<'_>) -> Found<CodePatch> {
             .scan(Pattern::new("?? 85 ?? 0F 94 ??"))
             .into_iter()
             .filter(|&site| x86::tests_since_and_shown(ix, site, win64, shown))
+            .map(|site| (site, site + 1))
             .collect::<Vec<_>>()
       },
       Isa::Aarch64 => {
          let shown = shown.ok_or("no fifth argument register")?;
-         ix.image
+         let mut sites = ix
+            .image
             .scan(Pattern::new("?? ?? 00 F1 ?? 13 ?? 1A ?? ?? ?? 39"))
             .into_iter()
             .filter(|&site| arm64::tests_since_and_shown(ix, site, shown))
-            .collect::<Vec<_>>()
+            .map(|site| (site, site + 4))
+            .collect::<Vec<_>>();
+         // ELF builds schedule other instructions between the three.
+         if ix.image.function_starts.is_none() {
+            sites.extend(arm64::scheduled_since_and_shown(ix, shown));
+         }
+         sites
       },
       Isa::Thumb2 => return Err(NO_THUMB.into()),
    };
    let sites = candidates
       .into_iter()
-      .filter(|&site| ix.function(site).is_some_and(|func| reads_idle_state(&func, site, state)))
+      .filter(|&(site, _)| {
+         ix.function(site)
+            .is_some_and(|func| reads_idle_state(&func, site, state))
+      })
       .collect::<Vec<_>>();
-   let site = crate::one("spotify idle flag", &sites)?;
+   // The test and the instruction patched: the `test` byte on x86-64, the
+   // `csel` on arm64.
+   let (_, patch_at) = crate::one("spotify idle flag", &sites)?;
    match ix.isa {
       #[cfg(any(
          target_arch = "x86_64",
          target_os = "macos",
          all(target_os = "linux", target_arch = "aarch64")
       ))]
-      Isa::X86_64 { .. } => CodePatch::at(ix, site + 1, &[0x39]),
+      Isa::X86_64 { .. } => CodePatch::at(ix, patch_at, &[0x39]),
       Isa::Thumb2 => Err(NO_THUMB.into()),
       Isa::Aarch64 => {
          let csel = ix
             .image
-            .read_u32(site + 4)
-            .ok_or_else(|| format!("{:#x} is unmapped", site + 4))?;
-         CodePatch::at(ix, site + 4, &arm64::mov_from_shown(csel).to_le_bytes())
+            .read_u32(patch_at)
+            .ok_or_else(|| format!("{patch_at:#x} is unmapped"))?;
+         CodePatch::at(ix, patch_at, &arm64::mov_from_shown(csel).to_le_bytes())
       },
    }
 }
@@ -224,6 +244,44 @@ mod arm64 {
          && csel & !0x1F == csel_shown
          && strb & 0xFFC0_03E0 == 0x3900_03E0
          && field(strb, 0) == flag
+   }
+
+   /// [`tests_since_and_shown`] as ELF builds schedule it: each `csel wD,
+   /// wzr, w(shown), ne` with its `cmp xS, #0` up to two instructions before
+   /// (only loads and stores, which set no flags, between) and its `strb wD,
+   /// [sp, #n]` up to eight after. Gives `(cmp, csel)` addresses.
+   pub(super) fn scheduled_since_and_shown(ix: &Index<'_>, shown: Reg) -> Vec<(usize, usize)> {
+      let csel_shown = CSEL_W | u32::from(shown) << 16 | NE << 12 | ZR << 5;
+      // The destination is in the low byte, so match the other three.
+      let csel = csel_shown.to_le_bytes();
+      let is_cmp = |word: u32| word & 0xFFFF_FC1F == 0xF100_001F && field(word, 5) != ZR;
+      // Loads and stores (op0 `x1x0`) leave the flags alone.
+      let keeps_flags = |word: u32| (word >> 25) & 0b0101 == 0b0100;
+      ix.image
+         .find_bytes(&csel[1..])
+         .into_iter()
+         .filter_map(|high| high.checked_sub(1))
+         .filter(|at| at.is_multiple_of(4) && ix.image.is_code(*at))
+         .filter_map(|at| {
+            let word = ix.image.read_u32(at)?;
+            if word & !0x1F != csel_shown {
+               return None;
+            }
+            let flag = field(word, 0);
+            let cmp = (1..=2).find_map(|back| {
+               let before = at.checked_sub(back * 4)?;
+               let between =
+                  (1..back).all(|gap| ix.image.read_u32(at - gap * 4).is_some_and(keeps_flags));
+               (between && ix.image.read_u32(before).is_some_and(is_cmp)).then_some(before)
+            })?;
+            let stores = (1..=8).any(|ahead| {
+               ix.image
+                  .read_u32(at + ahead * 4)
+                  .is_some_and(|strb| strb & 0xFFC0_03E0 == 0x3900_03E0 && field(strb, 0) == flag)
+            });
+            stores.then_some((cmp, at))
+         })
+         .collect()
    }
 
    /// `mov wD, w(shown)` (`orr wD, wzr, w(shown)`) for `csel wD, wzr, w(shown),
