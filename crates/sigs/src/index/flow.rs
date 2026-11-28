@@ -72,7 +72,11 @@ pub type Regs = [Val; 32];
 const fn calls(step: &Step) -> bool {
    match step.native {
       _ if matches!(step.op, Op::Call(_)) => true,
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Native::X86(iced_x86::Mnemonic::Call) => true,
       Native::Arm64(phoenix_hook::arm64::Insn::Blr { .. }) => true,
       // `blx rm`.
@@ -85,7 +89,11 @@ const fn calls(step: &Step) -> bool {
 /// [`Op`] leaves as [`Op::Other`].
 const fn jumps_away(step: &Step) -> bool {
    match step.native {
-      #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+      #[cfg(any(
+         target_arch = "x86_64",
+         target_os = "macos",
+         all(target_os = "linux", target_arch = "aarch64")
+      ))]
       Native::X86(iced_x86::Mnemonic::Jmp) => matches!(step.op, Op::Other),
       Native::Arm64(phoenix_hook::arm64::Insn::Br { .. }) => true,
       // `bx rm`.
@@ -222,7 +230,11 @@ pub fn follow(
 /// Whether the call at `steps[index]` is Win64's `__chkstk`, which a frame over
 /// a page opens with as `mov eax, size; call __chkstk` and which keeps every
 /// register but `rax`.
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 fn probes_stack(isa: Isa, steps: &[Step], index: usize) -> bool {
    isa == (Isa::X86_64 { win64: true })
       && index
@@ -231,7 +243,11 @@ fn probes_stack(isa: Isa, steps: &[Step], index: usize) -> bool {
          .is_some_and(|before| matches!(before.op, Op::Imm { reg, .. } if reg == isa.ret()))
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_os = "macos")))]
+#[cfg(not(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+)))]
 const fn probes_stack(_isa: Isa, _steps: &[Step], _index: usize) -> bool {
    false
 }

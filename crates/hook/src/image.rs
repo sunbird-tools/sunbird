@@ -201,6 +201,7 @@ impl Segment<'_> {
 /// relocations applied so pointer slots hold the addresses code would see.
 pub struct Image<'a> {
    pub path:            String,
+   pub format:          Format,
    pub build_id:        Option<BuildId>,
    pub segments:        Vec<Segment<'a>>,
    /// Address of `.eh_frame_hdr`, from `PT_GNU_EH_FRAME`.
@@ -219,6 +220,14 @@ pub struct Image<'a> {
    /// Mach-O `LC_FUNCTION_STARTS`, the only function table a Mach-O carries
    /// without parsing `__unwind_info`.
    pub function_starts: Option<FunctionStarts>,
+}
+
+/// The object format an image was loaded from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+   Elf,
+   MachO,
+   Pe,
 }
 
 /// Where an image's `LC_FUNCTION_STARTS` data sits, decoded on first use, since
@@ -323,8 +332,7 @@ impl Image<'static> {
                   .to_string_lossy()
                   .into_owned()
             };
-            let mut build_id = None;
-            let mut segments = Vec::new();
+            let (mut build_id, mut segments) = (None, Vec::new());
             // `(fileoff - vmaddr)` of `__LINKEDIT` and `__TEXT`'s vmaddr, so a
             // file offset there maps to memory; then the starts' file range.
             let (mut linkedit, mut text, mut starts) = (None, None, None);
@@ -388,6 +396,7 @@ impl Image<'static> {
             };
             Some(Image {
                path,
+               format: Format::MachO,
                build_id,
                segments,
                eh_frame_hdr: None,
@@ -721,6 +730,7 @@ impl Image<'static> {
 
          let mut image = Image {
             path,
+            format: Format::Elf,
             build_id: None,
             segments: Vec::new(),
             eh_frame_hdr: None,
@@ -1004,6 +1014,7 @@ impl Image<'static> {
 
       Some(Self {
          path,
+         format: Format::Pe,
          build_id: None,
          segments,
          eh_frame_hdr: None,
@@ -1974,6 +1985,7 @@ mod tests {
       put(0x4C, &0x80_u32.to_le_bytes());
       let image = Image {
          path:            String::new(),
+         format:          Format::Elf,
          build_id:        None,
          segments:        vec![Segment {
             addr:       0x1000,

@@ -287,7 +287,11 @@ impl<'img> Index<'img> {
       let bytes = steps
          * match self.isa {
             Isa::Aarch64 | Isa::Thumb2 => 4,
-            #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+            #[cfg(any(
+               target_arch = "x86_64",
+               target_os = "macos",
+               all(target_os = "linux", target_arch = "aarch64")
+            ))]
             Isa::X86_64 { .. } => 15,
          };
       let starts = across(&self.functions, |part| {

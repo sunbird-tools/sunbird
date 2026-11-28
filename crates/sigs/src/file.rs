@@ -51,6 +51,7 @@ use object::{
 };
 use phoenix_hook::image::{
    BuildId,
+   Format,
    FunctionStarts,
    Image,
    Segment,
@@ -169,6 +170,7 @@ impl<'a> ElfFile<'a> {
 
       let mut image = Image {
          path: path.to_owned(),
+         format: Format::Elf,
          build_id: None,
          segments: Vec::new(),
          eh_frame_hdr: None,
@@ -287,6 +289,7 @@ impl<'a> MachOFile<'a> {
       }
       let mut image = Image {
          path:            path.to_owned(),
+         format:          Format::MachO,
          build_id:        None,
          segments:        Vec::new(),
          eh_frame_hdr:    None,
@@ -482,6 +485,7 @@ impl<'a> PeFile<'a> {
       Ok(Self {
          image: Image {
             path: path.to_owned(),
+            format: Format::Pe,
             build_id,
             segments,
             eh_frame_hdr: None,

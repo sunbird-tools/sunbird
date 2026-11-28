@@ -16,7 +16,7 @@ object       = { optional = true, workspace = true }
 phoenix-hook = { workspace = true }
 serde        = { workspace = true }
 
-[target.'cfg(any(target_arch = "x86_64", target_os = "macos"))'.dependencies]
+[target.'cfg(any(target_arch = "x86_64", target_os = "macos", all(target_os = "linux", target_arch = "aarch64")))'.dependencies]
 iced-x86 = { workspace = true }
 
 [lints]

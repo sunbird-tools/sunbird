@@ -8,17 +8,33 @@
 
 use std::ffi::c_void;
 
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod desktop;
 #[cfg(feature = "file")] pub mod file;
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod gateway_send;
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod http;
 pub mod index;
 pub mod ios;
 pub mod locate;
-#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod macos;
 pub mod registry;
 
@@ -52,10 +68,10 @@ pub struct StaffField {
    target_os = "windows",
    target_os = "ios",
    target_os = "macos",
-   all(target_os = "linux", target_arch = "x86_64")
+   target_os = "linux"
 )))]
 pub const LIBRARIES: &[&str] = &["liblibdiscord_wasm_host.so", "libstand_in.so"];
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(target_os = "linux")]
 pub const LIBRARIES: &[&str] = &["discord-phoenix", "libstand_in.so"];
 #[cfg(target_os = "ios")]
 pub const LIBRARIES: &[&str] = &["PhoenixFatClient"];
@@ -120,13 +136,13 @@ pub struct GatewayEvent {
 #[cfg(any(
    target_os = "windows",
    target_os = "macos",
-   all(target_os = "linux", target_arch = "x86_64")
+   target_os = "linux"
 ))]
 pub const RESULT_WORDS: usize = 12;
 #[cfg(not(any(
    target_os = "windows",
    target_os = "macos",
-   all(target_os = "linux", target_arch = "x86_64")
+   target_os = "linux"
 )))]
 pub const RESULT_WORDS: usize = 4;
 
@@ -162,7 +178,7 @@ mod tests {
       #[cfg(any(
          target_os = "windows",
          target_os = "macos",
-         all(target_os = "linux", target_arch = "x86_64")
+         target_os = "linux"
       ))]
       assert_eq!(size_of::<HandlerResult>(), 96);
       #[cfg(all(
@@ -170,7 +186,7 @@ mod tests {
          not(any(
             target_os = "windows",
             target_os = "macos",
-            all(target_os = "linux", target_arch = "x86_64")
+            target_os = "linux"
          ))
       ))]
       assert_eq!(size_of::<HandlerResult>(), 32);

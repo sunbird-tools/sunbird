@@ -97,6 +97,13 @@ pub enum Insn {
       imm:  isize,
       load: bool,
    },
+   /// `ldadd rs, rt, [rn]` of `size` bytes, in any memory ordering.
+   LdAdd {
+      rs:   Reg,
+      rt:   Reg,
+      rn:   Reg,
+      size: usize,
+   },
    Ret,
    Br {
       rn: Reg,
@@ -141,6 +148,14 @@ pub fn decode(word: u32, pc: usize) -> Insn {
       _ if word == 0xD65F_03C0 => Insn::Ret,
       _ if word & 0xFFFF_FC1F == 0xD61F_0000 => Insn::Br { rn },
       _ if word & 0xFFFF_FC1F == 0xD63F_0000 => Insn::Blr { rn },
+      _ if word & 0x3F20_FC00 == 0x3820_0000 => {
+         Insn::LdAdd {
+            rs: ((word >> 16) & 0x1F) as Reg,
+            rt: rd,
+            rn,
+            size: 1 << (word >> 30),
+         }
+      },
       _ if word & 0x9F00_0000 == 0x9000_0000 => {
          let immlo = (word >> 29) & 3;
          let immhi = (word >> 5) & 0x7_FFFF;
@@ -343,6 +358,12 @@ fn format_insn(word: u32, pc: usize) -> String {
          _ => "nv",
       }
    };
+   let width = |size: usize| match size {
+      1 => ("b", false),
+      2 => ("h", false),
+      4 => ("", false),
+      _ => ("", true),
+   };
    match decode(word, pc) {
       Insn::Adrp { rd, page } => format!("adrp {}, {page:#x}", x(rd, true)),
       Insn::AddImm { rd, rn, imm } => format!("add {}, {}, #{imm:#x}", sp(rd), sp(rn)),
@@ -353,13 +374,8 @@ fn format_insn(word: u32, pc: usize) -> String {
          offset,
          size,
       } => {
-         let (op, wide) = match size {
-            1 => ("ldrb", false),
-            2 => ("ldrh", false),
-            4 => ("ldr", false),
-            _ => ("ldr", true),
-         };
-         format!("{op} {}, [{}, #{offset:#x}]", x(rt, wide), sp(rn))
+         let (suffix, wide) = width(size);
+         format!("ldr{suffix} {}, [{}, #{offset:#x}]", x(rt, wide), sp(rn))
       },
       Insn::Store {
          rt,
@@ -367,13 +383,12 @@ fn format_insn(word: u32, pc: usize) -> String {
          offset,
          size,
       } => {
-         let (op, wide) = match size {
-            1 => ("strb", false),
-            2 => ("strh", false),
-            4 => ("str", false),
-            _ => ("str", true),
-         };
-         format!("{op} {}, [{}, #{offset:#x}]", x(rt, wide), sp(rn))
+         let (suffix, wide) = width(size);
+         format!("str{suffix} {}, [{}, #{offset:#x}]", x(rt, wide), sp(rn))
+      },
+      Insn::LdAdd { rs, rt, rn, size } => {
+         let (suffix, wide) = width(size);
+         format!("ldadd{suffix} {}, {}, [{}]", x(rs, wide), x(rt, wide), sp(rn))
       },
       Insn::MovZ { rd, imm, wide } => format!("mov {}, #{imm:#x}", x(rd, wide)),
       Insn::MovN { rd, imm, wide } => format!("movn {}, #{imm:#x}", x(rd, wide)),

@@ -92,11 +92,11 @@ fn main() -> misstep::Result<()> {
       arm64: parsed.machine() == Machine::Aarch64,
    };
    match args.get(1).map(String::as_str) {
-      None => dump(image),
+      None => dump(image, tools.arm64),
       Some("check") => {
          let macho = matches!(parsed, BinaryFile::MachO(_));
          let family = if parsed.machine() == Machine::X86_64
-            || macho && !image.find_bytes(MACOS_DESKTOP).is_empty()
+            || parsed.machine() == Machine::Aarch64 && !image.find_bytes(DESKTOP_GATE).is_empty()
          {
             Family::Desktop
          } else {
@@ -235,9 +235,9 @@ fn explain(ix: &Index<'_>, addr: usize, base: usize) {
    }
 }
 
-/// A string only the desktop clients carry, which tells macOS Phoenix from
-/// iOS's `PhoenixFatClient`; both are arm64 Mach-O.
-const MACOS_DESKTOP: &[u8] = b"DESKTOP_ACCESS_GATE_TITLE";
+/// A string only the desktop clients carry, which tells arm64 Desktop Phoenix
+/// on macOS and Linux from the arm64 mobile clients.
+const DESKTOP_GATE: &[u8] = b"DESKTOP_ACCESS_GATE_TITLE";
 
 /// Runs every locator for `machine` and prints what each found.
 #[expect(clippy::too_many_lines, reason = "one report per locator")]
@@ -527,8 +527,8 @@ fn check(
                }),
          );
       },
-      // macOS Phoenix, the desktop client built for arm64.
-      Machine::Aarch64 if macho && !image.find_bytes(MACOS_DESKTOP).is_empty() => {
+      // Desktop Phoenix built for arm64, on macOS or Linux.
+      Machine::Aarch64 if !image.find_bytes(DESKTOP_GATE).is_empty() => {
          report(
             "malloc re-exec",
             image
@@ -763,7 +763,7 @@ fn check(
    Ok(())
 }
 
-fn dump(image: &Image<'_>) -> misstep::Result<()> {
+fn dump(image: &Image<'_>, arm64: bool) -> misstep::Result<()> {
    match image.build_id {
       Some(id) => println!("{} build {id}", image.file_name()),
       None => println!("{} without a build ID", image.file_name()),
@@ -794,7 +794,7 @@ fn dump(image: &Image<'_>) -> misstep::Result<()> {
 
       println!("   {:<40} {:#010x}{note}", entry.name, entry.handler);
    }
-   let http = if image.function_starts.is_some() {
+   let http = if arm64 {
       phoenix_sigs::macos::http_transport(image)
    } else {
       DesktopHttpTransport::locate(image)
