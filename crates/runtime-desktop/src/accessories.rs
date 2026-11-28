@@ -553,14 +553,11 @@ mod arm64 {
    };
 
    use phoenix_hook::image::Image;
-   use phoenix_sigs::{
-      index::Index,
-      locate::message::{
-         self,
-         BodyColors,
-         MessageBody,
-         MessageRow,
-      },
+   use phoenix_sigs::locate::message::{
+      self,
+      BodyColors,
+      MessageBody,
+      MessageRow,
    };
 
    use super::{
