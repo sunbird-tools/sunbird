@@ -94,6 +94,7 @@ use crate::{
    },
    shortcuts,
    sidebar,
+   forward,
    spotify::{
       self,
       Tweak,
@@ -1256,6 +1257,40 @@ fn hold_spotify<'js>(
    })
 }
 
+/// `phoenix.ui.disableForwardFollow`: forwarding a message keeps the current
+/// channel open instead of switching to a single destination while any plugin
+/// holds it.
+fn disable_forward_follow<'js>(ctx: &Ctx<'js>, plugin: &str) -> rquickjs::Result<Function<'js>> {
+   static NEXT_HOLD: AtomicU64 = AtomicU64::new(1);
+
+   if granted(ctx, plugin).is_none() {
+      return noop_handle(ctx);
+   }
+   let Some(registry) = ctx.userdata::<Desktop<'js>>() else {
+      return noop_handle(ctx);
+   };
+   let hold = NEXT_HOLD.fetch_add(1, Ordering::Relaxed);
+   let remover = Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
+      let Some(registry) = ctx.userdata::<Desktop<'js>>() else {
+         return;
+      };
+      let mut holds = registry.forward_follows.borrow_mut();
+      let before = holds.len();
+      holds.retain(|(held, _)| *held != hold);
+      if holds.len() != before {
+         forward::disable(false);
+      }
+   })?;
+   if !forward::disable(true) {
+      return noop_handle(ctx);
+   }
+   registry
+      .forward_follows
+      .borrow_mut()
+      .push((hold, plugin.to_owned()));
+   Ok(remover)
+}
+
 fn spotify_object<'js>(ctx: &Ctx<'js>, plugin: &str) -> rquickjs::Result<Object<'js>> {
    let object = Object::new(ctx.clone())?;
    for (name, tweak) in [
@@ -1858,6 +1893,15 @@ pub fn desktop_ui_object<'js>(ctx: &Ctx<'js>, plugin: &str) -> rquickjs::Result<
          "collapseChannels",
          Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
             collapse_channels(&ctx, &collapse_owner)
+         })?,
+      )?;
+   }
+   if forward::ready() {
+      let forward_owner = plugin.to_owned();
+      ui.set(
+         "disableForwardFollow",
+         Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
+            disable_forward_follow(&ctx, &forward_owner)
          })?,
       )?;
    }

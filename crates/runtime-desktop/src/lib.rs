@@ -18,6 +18,7 @@ mod discord_version;
 mod double_click;
 mod emoji;
 mod fetch;
+mod forward;
 mod gateway_send;
 mod gpui;
 mod gpui_font;
@@ -268,6 +269,7 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
    feature("gpui_font", || gpui_font::install(&image, &ix));
    feature("mana_theme", || mana_theme::install(&image, &ix));
    feature("gpui_theme", || gpui_theme::install(&image, &ix));
+   feature("forward", || forward::install(&image, &ix));
    feature("os_redraw", || <os::Os as os::DesktopOs>::install(&image));
    #[cfg(target_os = "linux")]
    feature("shortcuts", shortcuts::linux::install);

@@ -82,6 +82,12 @@ pub mod sticker;
    target_os = "macos",
    all(target_os = "linux", target_arch = "aarch64")
 ))]
+pub mod forward;
+#[cfg(any(
+   target_arch = "x86_64",
+   target_os = "macos",
+   all(target_os = "linux", target_arch = "aarch64")
+))]
 pub mod gpui;
 #[cfg(any(
    target_arch = "x86_64",
@@ -615,6 +621,24 @@ pub const LOCATORS: &[Locator] = &[
       name:     "resolve font",
       families: DESKTOP,
       run:      |ix| resolve_font(ix).and_then(|func| hookable(ix, func.start)),
+   },
+   #[cfg(any(
+      target_arch = "x86_64",
+      target_os = "macos",
+      all(target_os = "linux", target_arch = "aarch64")
+   ))]
+   Locator {
+      name:     "forward follow",
+      families: DESKTOP,
+      run:      |ix| {
+         forward::forward_follow(ix).and_then(|found| {
+            let nav = hookable(ix, found.navigate)?;
+            match found.clips {
+               Some(clips) => Ok(format!("{nav}, clips {}", hookable(ix, clips)?)),
+               None => Ok(nav),
+            }
+         })
+      },
    },
 ];
 
