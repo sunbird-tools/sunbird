@@ -54,7 +54,8 @@ pub fn message_row(ix: &Index<'_>) -> Found<MessageRow> {
 
    let (mut row, mut message) = (None, None);
    for helper in helpers.iter() {
-      // Flattened: arm64 ELF builds form the field address inside outlined stubs.
+      // Flattened: arm64 ELF builds form the field address inside outlined
+      // stubs.
       let steps = helper.flat_steps();
       let id = formatted(ix, &steps, &templates)
          .ok_or_else(|| format!("message-content helper {helper:?} formats no field"))?;

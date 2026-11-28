@@ -671,9 +671,11 @@ fn find_gradient_tag(
                let cmps = steps[idx + 2..]
                   .iter()
                   .take(4)
-                  .filter_map(|next| match next.op {
-                     Op::Cmp { reg: r, value } => Some((r, value)),
-                     _ => None,
+                  .filter_map(|next| {
+                     match next.op {
+                        Op::Cmp { reg: r, value } => Some((r, value)),
+                        _ => None,
+                     }
                   })
                   .collect::<Vec<_>>();
                return match cmps[..] {

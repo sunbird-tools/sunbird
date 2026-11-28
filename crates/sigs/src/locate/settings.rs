@@ -242,6 +242,10 @@ pub struct SidebarRows {
    pub gear:          u16,
 }
 
+#[expect(
+   clippy::too_many_lines,
+   reason = "locates the row, its push and its click in one pass"
+)]
 pub fn settings_sidebar_rows(ix: &Index<'_>, page_offset: usize) -> Found<SidebarRows> {
    const ID: &[u8] = b"us-logout";
    // Pages, headers, separators and Log Out all go through the push.
