@@ -763,8 +763,6 @@ mod arm64 {
       Image,
       sret_caller,
    };
-   use phoenix_sigs::index::Index;
-
    use super::{
       ACTIVE_COUNT,
       MENU_SYMS,
