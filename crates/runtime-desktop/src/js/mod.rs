@@ -4,6 +4,8 @@
 pub mod commands;
 pub mod fonts;
 pub mod native;
+#[cfg(windows)] pub mod navigation_menus;
+#[cfg(windows)] pub mod surfaces;
 pub mod themes;
 pub mod ui;
 
@@ -93,6 +95,10 @@ pub struct Desktop<'js> {
    pub idle_off:         RefCell<Vec<(u64, String, Timer)>>,
    /// `phoenix.commands.register` commands by lowercase name.
    pub commands:         RefCell<HashMap<String, Registered<'js>>>,
+   #[cfg(windows)]
+   surface_buttons:     RefCell<Vec<surfaces::Handler<'js>>>,
+   #[cfg(windows)]
+   navigation_actions:  RefCell<Vec<navigation_menus::Handler<'js>>>,
 }
 
 impl<'js> Desktop<'js> {
@@ -108,6 +114,15 @@ impl<'js> Desktop<'js> {
 // SAFETY: every field is bound to 'js, and Changed swaps exactly that lifetime.
 unsafe impl<'js> JsLifetime<'js> for Desktop<'js> {
    type Changed<'to> = Desktop<'to>;
+}
+
+fn unload_ui_extensions(registry: &Desktop<'_>, plugin: &str) {
+   ui::unload_composer_buttons(registry, plugin);
+   #[cfg(windows)]
+   {
+      surfaces::unload(registry, plugin);
+      navigation_menus::unload(registry, plugin);
+   }
 }
 
 /// Drops the accessories, member decorations, context menu actions, open page
@@ -206,7 +221,7 @@ pub fn unload(ctx: &Ctx<'_>, name: &str) {
          !held
       });
 
-   ui::unload_composer_buttons(&registry, name);
+   unload_ui_extensions(&registry, name);
 
    registry
       .shortcuts

@@ -26,6 +26,8 @@ pub mod spotify;
 pub mod staff;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod sticker;
+#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+pub mod surfaces;
 
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod gpui;

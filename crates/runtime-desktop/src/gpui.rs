@@ -1151,6 +1151,42 @@ pub fn build_raw_button(
    Some(new_button(sym, id, label, variant, size, vtbl, rc_ptr))
 }
 
+#[cfg(windows)]
+pub fn build_surface_button(
+   id: &str,
+   label: &str,
+   vtbl: *const RcFnVtbl,
+   action: [u64; 2],
+   owned_id: usize,
+) -> Option<RawButton> {
+   let sym = SYMBOLS.get()?;
+   let contents = [1, 1, action[0], action[1]];
+   let rc = host_alloc(size_of_val(&contents), align_of::<u64>())?;
+   if rc.is_null() {
+      return None;
+   }
+   // SAFETY: rc is an aligned native RcBox<[u64; 2]>, with strong and weak counts of one.
+   unsafe {
+      ptr::copy_nonoverlapping(contents.as_ptr().cast::<u8>(), rc, size_of_val(&contents));
+   }
+   let mut button = new_button(
+      sym,
+      "sunbird-button",
+      label,
+      BtnVariant::Secondary,
+      BtnSize::Small,
+      vtbl,
+      rc.cast(),
+   );
+   button.put(owned_id, SharedString::from_str(id));
+   Some(button)
+}
+
+#[cfg(windows)]
+pub fn button_new_addr() -> Option<usize> {
+   SYMBOLS.get().map(|sym| sym.button_new as usize)
+}
+
 /// A Mana `Switch` row whose `on_change` calls `vtbl` with `action_id`, for
 /// switches outside the settings page (`crate::modal`).
 pub fn build_raw_switch(
@@ -1352,6 +1388,25 @@ pub fn supports_push_any() -> bool {
    SYMBOLS.get().is_some_and(|s| s.div_push_any.is_some())
 }
 
+#[cfg(windows)]
+pub unsafe fn append_div(parent: *mut c_void, child: RawDiv) {
+   let Some(sym) = SYMBOLS.get() else {
+      return;
+   };
+   let Some(push) = sym.div_push_any else {
+      return;
+   };
+   let mut any = MaybeUninit::<RawAnyElement>::uninit();
+   Builder { sym }.write_any(child, any.as_mut_ptr());
+   // SAFETY: caller supplies a live native Div, and push moves the child into its Vec.
+   unsafe {
+      push(
+         parent.cast::<u8>().add(sym.layout.div.children).cast(),
+         any.as_mut_ptr(),
+      );
+   }
+}
+
 /// Whether `div_push_any` and `str_into_any` resolved for native message
 /// accessories.
 #[must_use]
@@ -1367,6 +1422,7 @@ pub fn wrap_with_accessories(
    sret: *mut RawAnyElement,
    lines: &[(String, Option<u32>)],
    tint: Option<u32>,
+   #[cfg(windows)] actions: Option<RawDiv>,
 ) -> bool {
    let muted = crate::mana_theme::color_to_hsla(
       crate::mana_theme::sunbird_palette().text_muted,
@@ -1428,6 +1484,11 @@ pub fn wrap_with_accessories(
       outer = b.push_div(outer, acc_box);
    }
 
+   #[cfg(windows)]
+   if let Some(mut actions) = actions {
+      b.style_div(&mut actions, |style| style.length(style.at.padding[3], gpui_px(72.0)));
+      outer = b.push_div(outer, actions);
+   }
    b.write_any(outer, sret);
    true
 }
@@ -1574,32 +1635,43 @@ fn svg_icon(
    }
 }
 
-/// `pieces` side by side in a row: each piece's icons when it has any and
-/// they can be drawn, else its text.
-fn inline_row(b: &Builder, pieces: &[Piece], font_px: f32) -> RawDiv {
-   let mut row = b.h_row(4.0, false);
-   for piece in pieces {
-      let hsla = piece.color.map_or_else(accessory_muted, argb_to_hsla);
-      if let Some(svg) = SVG.get().filter(|_| !piece.icons.is_empty()) {
-         let mut icons = b.h_row(2.0, false);
-         for &(path, color) in &piece.icons {
-            let mut icon = svg_icon(
-               b,
-               svg,
-               path,
-               gpui_px(font_px + 3.0),
-               color.map_or(hsla, argb_to_hsla),
-            );
-            b.push_any(&mut icons, &mut icon);
-         }
-         row = b.push_div(row, icons);
-      } else if !piece.text.is_empty()
-         && let Some(line) = b.text_line(&piece.text, hsla, font_px)
-      {
-         row = b.push_div(row, line);
+fn piece_div(b: &Builder, piece: &Piece, font_px: f32, wrap: bool) -> Option<RawDiv> {
+   const FLEX_WRAP: u8 = 1;
+   const WHITE_SPACE_NORMAL: u8 = 0;
+   let hsla = piece.color.map_or_else(accessory_muted, argb_to_hsla);
+   let mut div = if let Some(svg) = SVG.get().filter(|_| !piece.icons.is_empty()) {
+      let mut icons = b.h_row(2.0, false);
+      for &(path, color) in &piece.icons {
+         let mut icon = svg_icon(
+            b,
+            svg,
+            path,
+            gpui_px(font_px + 3.0),
+            color.map_or(hsla, argb_to_hsla),
+         );
+         b.push_any(&mut icons, &mut icon);
       }
+      icons
+   } else if piece.text.is_empty() {
+      return None;
+   } else {
+      b.text_line(&piece.text, hsla, font_px)?
+   };
+   if wrap {
+      b.style_div(&mut div, |s| {
+         s.length(s.at.size[0], W_FULL);
+         s.length(s.at.min_size[0], gpui_px(0.0));
+         s.set(s.at.white_space, WHITE_SPACE_NORMAL);
+         s.set(s.at.flex_wrap, FLEX_WRAP);
+      });
    }
-   row
+   Some(div)
+}
+
+#[cfg(windows)]
+pub fn wrapped_piece(piece: &Piece) -> Option<RawDiv> {
+   let sym = SYMBOLS.get()?;
+   piece_div(&Builder { sym }, piece, 13.0, true)
 }
 
 /// Adds `pieces` as one more child of a `Div` Discord built by value, like the
@@ -1616,7 +1688,12 @@ pub fn append_pieces(div: *mut c_void, pieces: &[Piece], lead: f32) -> bool {
       return false;
    }
    let b = Builder { sym };
-   let mut row = inline_row(&b, pieces, 13.0);
+   let mut row = b.h_row(4.0, false);
+   for piece in pieces {
+      if let Some(child) = piece_div(&b, piece, 13.0, false) {
+         row = b.push_div(row, child);
+      }
+   }
    if lead > 0.0 {
       b.style_div(&mut row, |s| s.length(s.at.padding[3], gpui_px(lead)));
    }

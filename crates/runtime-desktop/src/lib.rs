@@ -35,6 +35,7 @@ pub mod mana_theme;
 mod members;
 mod message;
 mod modal;
+#[cfg(windows)] mod navigation_menus;
 mod notices;
 mod onboarding;
 mod os;
@@ -49,6 +50,7 @@ mod spotify;
 mod staff;
 mod sticker;
 mod toolbar;
+#[cfg(windows)] mod surfaces;
 
 use std::{
    ffi::c_void,
@@ -241,6 +243,8 @@ pub fn prepare(home: &Path) -> Result<(), Error> {
    let modal = require(modal::hooked(), "Workspace::render_overlays is not hooked");
    health::record("notices", health::Kind::Feature, modal.clone());
    critical("modal", modal);
+   #[cfg(windows)]
+   feature("plugin_ui_surfaces", || surfaces::install(&image, &ix));
    feature("context_menu", || context_menu::install(&image, &ix));
    feature("double_click", || double_click::pane::install(&ix));
    feature("client_commands", || client_commands::install(&image, &ix));

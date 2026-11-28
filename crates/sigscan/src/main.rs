@@ -430,9 +430,10 @@ fn check(
             desktop::icon_names(image).map(|names| format!("{} names", names.len())),
          );
          let row = locate::message::message_row(ix);
+         let message_menu = desktop::message_context_menu(image);
          report(
             "message context menu",
-            desktop::message_context_menu(image).map(|menu| {
+            message_menu.as_ref().map(|menu| {
                format!(
                   "{} (msg +{:#x}, id +{:#x}, ch +{:#x}) {:x?}",
                   at(menu.build_fn),
@@ -441,19 +442,16 @@ fn check(
                   menu.channel_id_offset,
                   menu.layout,
                )
-            }),
+            }).map_err(Clone::clone),
          );
+         let native_modal = gpui.as_ref().map_err(Clone::clone).and_then(|gpui| {
+            let layouts = layouts.as_ref().map_err(Clone::clone)?;
+            desktop::modal(image, gpui.div_into_any, &layouts.div)
+         });
          report(
             "native modal",
-            gpui
+            native_modal
                .as_ref()
-               .map_err(|_| "needs the builders".to_owned())
-               .and_then(|gpui| {
-                  let layouts = layouts
-                     .as_ref()
-                     .map_err(|_| "needs the layouts".to_owned())?;
-                  desktop::modal(image, gpui.div_into_any, &layouts.div)
-               })
                .map(|m| {
                   format!(
                      "overlay={}, push={}, new={}, into_any={}, div_id={}, val=+{:#x}, \
@@ -470,8 +468,35 @@ fn check(
                      m.dismiss.propagate_event,
                      m.layout,
                   )
-               }),
+               }).map_err(Clone::clone),
          );
+         if abi == x86::Abi::Win64 {
+            report("ui composer", native_modal.as_ref().map_err(Clone::clone)
+               .and_then(|modal| {
+                  let layout = layouts.as_ref().map_err(Clone::clone)?;
+                  locate::surfaces::composer_buttons(ix, modal.div_id, layout.div.size)
+               })
+               .map(|(site, target)| format!("{} -> {}", at(site), at(target))));
+            for surface in locate::surfaces::Surface::DIVS {
+               report(&format!("ui {}", surface.name()), native_modal.as_ref().map_err(Clone::clone)
+                  .and_then(|modal| locate::surfaces::div_ids(ix, modal.div_id, surface))
+                  .map(|slots| format!("{slots:x?}")));
+            }
+            report("ui message toolbar", gpui.as_ref().map_err(Clone::clone).and_then(|gpui| {
+               row.as_ref().map_err(Clone::clone)?;
+               let layout = layouts.as_ref().map_err(Clone::clone)?;
+               locate::surfaces::button_id_field(ix, gpui.button_new, layout.button.size)
+            }).map(|field| format!("button id +{field:#x}")));
+            report("ui context menus", message_menu.as_ref().map_err(Clone::clone)
+               .and_then(|menu| locate::surfaces::menus(ix, menu.layout.size))
+               .map(|menus| format!("{menus:x?}")));
+            report("ui context menu ids", message_menu.as_ref().map_err(Clone::clone)
+               .and_then(|menu| {
+                  locate::surfaces::menu_id_field(ix, menu.with_id, menu.layout.props_size)
+                     .ok_or_else(|| "native menu id field not found".to_owned())
+               })
+               .map(|offset| format!("props +{offset:#x}")));
+         }
          report(
             "native text fields",
             desktop::text_fields(image).map(|tf| {

@@ -231,6 +231,11 @@ pub fn invalidate_discord_windows() {
    crate::modal::force_redraw();
 }
 
+#[cfg(windows)]
+pub fn message_rows_hooked() -> bool {
+   ORIG_RENDER_ROW.get().is_some()
+}
+
 /// The message id currently being rendered on this thread on macOS arm64.
 #[cfg(target_os = "macos")]
 pub fn current_rendering_message_id() -> u64 {
@@ -420,12 +425,10 @@ fn decorate(sret: *mut RawAnyElement, message_id: u64) {
       return;
    }
    double_click::wrap_row(sret, message_id);
-   if ACTIVE_COUNT.load(Ordering::Relaxed) == 0 {
-      return;
-   }
-
-   let Some(items) = lookup_cached(message_id) else {
-      return;
+   let items = if ACTIVE_COUNT.load(Ordering::Relaxed) == 0 {
+      Vec::new()
+   } else {
+      lookup_cached(message_id).unwrap_or_default()
    };
 
    let tint = items.iter().rev().find_map(|item| item.tint);
@@ -434,12 +437,25 @@ fn decorate(sret: *mut RawAnyElement, message_id: u64) {
       .filter(|item| !item.text.is_empty())
       .map(|item| (item.text, item.color))
       .collect::<Vec<_>>();
-   if lines.is_empty() && tint.is_none() {
-      return;
-   }
-
    let _ = std::panic::catch_unwind(|| {
-      gpui::wrap_with_accessories(sret, &lines, tint);
+      #[cfg(windows)]
+      let actions = crate::surfaces::row(
+         phoenix_sigs::locate::surfaces::Surface::MessageToolbar,
+         message_id,
+      );
+      #[cfg(not(windows))]
+      let has_actions = false;
+      #[cfg(windows)]
+      let has_actions = actions.is_some();
+      if has_actions || !lines.is_empty() || tint.is_some() {
+         gpui::wrap_with_accessories(
+            sret,
+            &lines,
+            tint,
+            #[cfg(windows)]
+            actions,
+         );
+      }
    });
 }
 

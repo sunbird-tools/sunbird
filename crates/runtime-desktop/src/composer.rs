@@ -233,6 +233,10 @@ pub mod buttons {
    /// Hooks `Div::id`, where the chat bar names the emoji button's wrapper.
    /// arm64 returns the div through `x8`, which `hook_sret` adapts.
    fn install_ids(image: &Image<'static>) {
+      #[cfg(windows)]
+      if crate::surfaces::div_id_hooked() {
+         return;
+      }
       let addr = crate::modal::DIV_ID.load(Ordering::Acquire);
       if addr == 0 {
          return;
@@ -262,6 +266,12 @@ pub mod buttons {
          .expect("the detour only runs once ORIG_ID is set");
       // SAFETY: forwards `Div::id`'s own arguments.
       let out = unsafe { orig(out, div, id, len) };
+      // SAFETY: out is the native Div and id is the original Div::id string.
+      unsafe { append_at_anchor(out, id, len) };
+      out
+   }
+
+   pub unsafe fn append_at_anchor(out: *mut RawDiv, id: *const u8, len: usize) {
       if IN_BAR.get()
          && !out.is_null()
          && !id.is_null()
@@ -271,7 +281,6 @@ pub mod buttons {
       {
          let _ = panic::catch_unwind(AssertUnwindSafe(|| join(out)));
       }
-      out
    }
 
    /// Lays the emoji button's wrapper out as a row and puts the plugin buttons

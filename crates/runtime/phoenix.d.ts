@@ -1448,6 +1448,55 @@ declare namespace Phoenix {
     update(patch: ButtonPatch): void;
   }
 
+  type UiSurface = "composer" | "messageToolbar" | "serverList" | "account" | "profile" | "mediaViewer";
+
+  interface SurfaceButtonOptions {
+    label: string;
+    priority?: number;
+    onPress(ctx: {
+      surface: UiSurface;
+      currentUserId: string | null;
+      channelId: string | null;
+      messageId?: string;
+      message?: Message | null;
+    }): void;
+  }
+
+  interface SurfaceButtonRemover {
+    (): void;
+    update(patch: Partial<Pick<SurfaceButtonOptions, "label" | "priority">>): void;
+  }
+
+  interface SurfaceSectionOptions {
+    title?: string;
+    content: Rendered;
+    priority?: number;
+  }
+
+  interface SurfaceSectionRemover {
+    (): void;
+    /// Replaces the section's content and options.
+    update(options: SurfaceSectionOptions): void;
+  }
+
+  type NavigationMenu = "server" | "channel" | "user" | "message";
+
+  interface NavigationMenuAction {
+    label: string;
+    icon?: Icon;
+    danger?: boolean;
+    priority?: number;
+    /// Place the action relative to a native item's id. An unavailable id falls back to the end.
+    beforeId?: string;
+    afterId?: string;
+    onPress(ctx: { menu: NavigationMenu; targetId: string | null }): void;
+  }
+
+  type NavigationMenuEdit =
+    | { id: string; beforeId: string; afterId?: never }
+    | { id: string; afterId: string; beforeId?: never }
+    | { id: string; beforeId?: never; afterId?: never };
+
   interface PageButton {
     label: string;
     /// A `res://` drawable URI, or a message action accessibility id to borrow its icon.
@@ -1492,6 +1541,19 @@ declare namespace Phoenix {
     /// source, drawn in the bar's icon color, or in `tint` while it is set; a `res://` icon shows
     /// `label` instead.
     addComposerButton(options: ButtonOptions): ButtonRemover;
+    /// Windows. Whether the current Phoenix build has a native plugin button slot here.
+    hasSurface?(surface: UiSurface): boolean;
+    /// Windows. Adds a native button and throws if hasSurface reports it unavailable.
+    /// The composer surface places it by the emoji picker.
+    addSurfaceButton?(surface: UiSurface, options: SurfaceButtonOptions): SurfaceButtonRemover;
+    /// Windows. Renders a section of text or icons on the selected surface.
+    addSurfaceSection?(surface: "profile" | "serverList", options: SurfaceSectionOptions): SurfaceSectionRemover;
+    /// Windows. Whether a native navigation context menu can host plugin actions.
+    hasContextMenu?(menu: NavigationMenu): boolean;
+    /// Windows. Appends a native action to the menu and returns its remover.
+    addContextMenuAction?(menu: NavigationMenu, options: NavigationMenuAction): Remover;
+    /// Windows. Moves or hides top-level native items with an inline id (up to 23 UTF-8 bytes).
+    patchContextMenu?(menu: NavigationMenu, edits: NavigationMenuEdit[]): Remover;
     /// A line under each message's content, or after its timestamp with `placement: "header"`.
     /// It runs once per message and place, and the result is kept until `update`.
     addMessageAccessory(options: {
