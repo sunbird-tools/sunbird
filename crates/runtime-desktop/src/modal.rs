@@ -53,6 +53,7 @@ use phoenix_sigs::desktop::{
    ScaleFadeLayout,
    layout,
 };
+use phoenix_sigs::locate::dismiss_stack;
 
 use crate::{
    gpui::{
@@ -425,6 +426,33 @@ struct DismissSymbols {
    propagate_event:      usize,
 }
 
+/// `build(out, name, len, kind, closure)` of a dismiss stack entry's config.
+type DismissBuildFn = unsafe extern "C" fn(*mut u8, *const u8, usize, u8, *const u8);
+/// `register(config, window, cx)`, which takes the config.
+type DismissRegisterFn = unsafe extern "C" fn(*mut u8, *mut c_void, *mut c_void);
+
+/// What [`register_dismiss`] calls, from [`dismiss_stack::dismiss_stack`].
+struct DismissStack {
+   build:    DismissBuildFn,
+   register: DismissRegisterFn,
+   kind:     u8,
+   /// The on-dismiss vtable `build` stores, which ours replaces.
+   theirs:   usize,
+   /// Ours: the same closure size and align, so Discord frees the `Rc` with
+   /// the layout it allocated, and [`dismiss_modal`] as its `call`.
+   ours:     &'static RcFnVtbl,
+}
+
+/// A dismiss stack entry's config, which `build` fills and `register` takes.
+/// Larger than any build's (0x88 bytes on 2026-11 builds).
+#[repr(C, align(16))]
+struct DismissConfig([u8; 0x100]);
+
+/// The closure `build` moves into the entry, never read: [`DismissStack::ours`]
+/// ignores it and drops nothing.
+#[repr(C, align(16))]
+struct DismissClosure([u8; 0x400]);
+
 struct TextFieldSymbols {
    cx_new_single:       CxNewFieldFn,
    cx_new_multiline:    CxNewFieldFn,
@@ -489,6 +517,7 @@ fn epoch_ms() -> u64 {
 static MODAL_SYM: OnceLock<ModalSymbols> = OnceLock::new();
 static FIELD_SYM: OnceLock<TextFieldSymbols> = OnceLock::new();
 static DISMISS_SYM: OnceLock<DismissSymbols> = OnceLock::new();
+static DISMISS_STACK: OnceLock<DismissStack> = OnceLock::new();
 static ANIMATION_FRAME: OnceLock<AnimationFrameFn> = OnceLock::new();
 static SCALE_FADE: OnceLock<ScaleFadeSymbols> = OnceLock::new();
 static PUMP_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -994,6 +1023,89 @@ static SWALLOW_PRESS_VTBL: RcFnVtbl = RcFnVtbl {
 
 pub const PHASE_BUBBLE: u8 = 0;
 pub const PHASE_CAPTURE: u8 = 1;
+
+/// Closes the open modal when mana's dismiss stack picks it, on Escape.
+///
+/// Rust ABI like [`scrim_press`]: `call(self, window, cx)`.
+unsafe fn dismiss_modal(_data: *const u8, _window: *mut c_void, _app: *mut c_void) {
+   // A stale entry lives until the next frame, so this may find none open.
+   let _ = std::panic::catch_unwind(close_active);
+}
+
+/// Registers the open modal in mana's dismiss stack for this frame, under
+/// `name`, so Escape closes it before what it is drawn over.
+///
+/// Runs only from a view's render, where `register` finds the view.
+fn register_dismiss(name: &'static str, window: *mut c_void, app: *mut c_void) {
+   let Some(stack) = DISMISS_STACK.get() else {
+      return;
+   };
+   let mut config = DismissConfig([0; 0x100]);
+   let closure = DismissClosure([0; 0x400]);
+   // SAFETY: Discord's builder fills `config`, which is larger than its config,
+   // and copies `closure`, larger than the closure it takes, into an `Rc`.
+   unsafe {
+      (stack.build)(
+         config.0.as_mut_ptr(),
+         name.as_ptr(),
+         name.len(),
+         stack.kind,
+         closure.0.as_ptr(),
+      );
+   }
+   let (words, _) = config.0.as_chunks::<{ size_of::<usize>() }>();
+   let slot = words.iter().position(|word| *word == stack.theirs.to_ne_bytes());
+   let Some(slot) = slot else {
+      // ponytail: leaks the entry's `Rc`, on a build `sigs` matched but whose
+      // config moved the vtable out of reach; nothing registers then.
+      return;
+   };
+   let ours = ptr::from_ref(stack.ours) as usize;
+   config.0[slot * size_of::<usize>()..][..size_of::<usize>()].copy_from_slice(&ours.to_ne_bytes());
+   // SAFETY: from a view's render, with the live window and `&mut App`;
+   // `register` moves the config in.
+   unsafe { (stack.register)(config.0.as_mut_ptr(), window, app) };
+}
+
+/// Locates mana's dismiss stack registration for [`register_dismiss`].
+pub fn install_dismiss(ix: &crate::located::LazyIndex<'_>) {
+   let found = crate::located::get("dismiss_stack::dismiss_stack", || {
+      dismiss_stack::dismiss_stack(ix)
+   });
+   let found = match found {
+      Ok(found) => found,
+      Err(err) => {
+         log::warn!("desktop modal: {err}, Escape closes what modals are drawn over");
+         return;
+      },
+   };
+   let read = |offset: usize| {
+      // SAFETY: `sigs` checked the vtable's size and align words are mapped.
+      unsafe { ptr::with_exposed_provenance::<usize>(found.on_dismiss + offset).read_unaligned() }
+   };
+   let ours: &'static RcFnVtbl = Box::leak(Box::new(RcFnVtbl {
+      drop_in_place: noop_drop as *const c_void,
+      size:          read(8),
+      align:         read(16),
+      call_once:     dismiss_modal as *const c_void,
+      call_mut:      dismiss_modal as *const c_void,
+      call:          dismiss_modal as *const c_void,
+      extra:         ptr::null(),
+   }));
+   // SAFETY: the builder and registrar `sigs` found at User Settings' own
+   // modal, with the signatures it calls them with.
+   let stack = unsafe {
+      DismissStack {
+         build: std::mem::transmute::<usize, DismissBuildFn>(found.build),
+         register: std::mem::transmute::<usize, DismissRegisterFn>(found.register),
+         kind: found.kind,
+         theirs: found.on_dismiss,
+         ours,
+      }
+   };
+   let _ = DISMISS_STACK.set(stack);
+   log::info!("desktop modal: modals join mana's dismiss stack (kind {:#x})", found.kind);
+}
 
 const unsafe extern "C" fn noop_drop(_data: *mut u8) {}
 
@@ -2209,6 +2321,7 @@ fn push_modal(sret: *mut RawVecAny, window: *mut c_void, cx: *mut c_void) {
       let app = unsafe { *(cx.cast::<*mut c_void>()) };
       if let Some(scrim) = build_overlay(window, app) {
          push_overlay(sret, scrim);
+         register_dismiss("sunbird-modal", window, app);
          MODAL_RENDERED.store(true, Ordering::Release);
       }
    });
@@ -2244,6 +2357,9 @@ unsafe extern "C" fn settings_layer_detour(
       } else {
          None
       };
+      if scrim.is_some() {
+         register_dismiss("sunbird-modal-over-settings", window, app);
+      }
       // Settings draws over the workspace's overlays, so banners go on it too.
       let notices = crate::notices::build();
       if scrim.is_none() && notices.is_none() {

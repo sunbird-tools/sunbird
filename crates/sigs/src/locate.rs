@@ -16,6 +16,8 @@ pub mod composer;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod counts;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+pub mod dismiss_stack;
+#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod message;
 pub mod menu;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
