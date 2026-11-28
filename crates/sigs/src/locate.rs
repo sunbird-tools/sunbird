@@ -6,6 +6,8 @@ pub mod call_idle;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod channel;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+pub mod clickable;
+#[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod composer;
 #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
 pub mod counts;
@@ -136,6 +138,12 @@ pub const LOCATORS: &[Locator] = &[
       name:     "menu submenu",
       families: DESKTOP,
       run:      |ix| menu::submenu(ix).map(|layout| format!("{layout:x?}")),
+   },
+   #[cfg(any(target_arch = "x86_64", target_os = "macos"))]
+   Locator {
+      name:     "clickable",
+      families: DESKTOP,
+      run:      |ix| clickable::clickable(ix).map(|found| format!("{found:x?}")),
    },
    Locator {
       name:     "staff flag",

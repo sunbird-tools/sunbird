@@ -108,7 +108,10 @@ pub mod buttons {
    use phoenix_hook::image::Image;
    use phoenix_sigs::{
       index::Index,
-      locate::composer,
+      locate::{
+         clickable,
+         composer,
+      },
    };
 
    use crate::{
@@ -202,6 +205,7 @@ pub mod buttons {
       let _ = ORIG.set(orig);
       log::info!("composer buttons: hooked the button row @ {func:#x}");
       install_ids(image);
+      install_tooltips(ix);
    }
 
    type DivIdFn = unsafe extern "C" fn(*mut RawDiv, *mut RawDiv, *const u8, usize) -> *mut RawDiv;
@@ -228,16 +232,16 @@ pub mod buttons {
    const CURSOR_POINTING_HAND: u8 = 5;
 
    /// Hooks `Div::id`, where the chat bar names the emoji button's wrapper.
-   /// The x86 desktops only: arm64 returns the div through `x8`.
+   /// arm64 returns the div through `x8`, which `hook_sret` adapts.
    fn install_ids(image: &Image<'static>) {
       let addr = crate::modal::DIV_ID.load(Ordering::Acquire);
-      if !crate::X86_CODE || addr == 0 {
+      if addr == 0 {
          return;
       }
       // SAFETY: runs from `prepare` before Discord's threads, and `id_detour`
-      // has `Div::id`'s signature.
+      // has `Div::id`'s signature with the return slot first.
       if let Some(orig) = unsafe {
-         crate::hook::<DivIdFn>(
+         crate::hook_sret::<DivIdFn>(
             image,
             addr,
             id_detour as *const () as usize,
@@ -298,7 +302,11 @@ pub mod buttons {
       });
       for button in buttons.iter() {
          if let Some(cell) = icon_button(button) {
-            ours = push_div(ours, cell);
+            if let Some(found) = CLICKABLE.get() {
+               push_any(&mut ours, &mut tooltipped(cell, button, found));
+            } else {
+               ours = push_div(ours, cell);
+            }
          }
       }
       drop(buttons);
@@ -307,6 +315,86 @@ pub mod buttons {
       unsafe { ptr::write(wrapper, div) };
    }
 
+   /// Mana's `Clickable`, which the buttons sit in for their tooltips.
+   static CLICKABLE: OnceLock<clickable::Clickable> = OnceLock::new();
+   /// Bytes a `Clickable` is built in.
+   const CLICKABLE_CAP: usize = 0x400;
+   /// `TooltipPlacement::Above`.
+   const TOOLTIP_ABOVE: u8 = 0;
+
+   fn install_tooltips(ix: &Index<'_>) {
+      let found = clickable::clickable(ix)
+         .and_then(callable)
+         .and_then(|found| {
+            let div = gpui::layout().map(|layout| layout.div.size);
+            if found.size > CLICKABLE_CAP
+               || found.inner + found.inner_size > found.size
+               || div != Some(found.inner_size)
+            {
+               return Err(format!(
+                  "Clickable is {:#x} bytes with a {:#x}-byte Div, not {div:x?}",
+                  found.size, found.inner_size
+               ));
+            }
+            Ok(found)
+         });
+      match found {
+         Ok(found) => {
+            let _ = CLICKABLE.set(found);
+         },
+         Err(err) => log::warn!("composer buttons: {err}, buttons have no tooltips"),
+      }
+   }
+
+   /// `found` with `new` and `into_any` callable with the return slot first,
+   /// as arm64 takes it in `x8`.
+   fn callable(found: clickable::Clickable) -> Result<clickable::Clickable, String> {
+      if crate::X86_CODE {
+         return Ok(found);
+      }
+      let thunk = |func: usize| {
+         phoenix_hook::image::sret_caller(func)
+            .ok_or_else(|| format!("no memory for a Clickable thunk to {func:#x}"))
+      };
+      Ok(clickable::Clickable {
+         new: thunk(found.new)?,
+         into_any: thunk(found.into_any)?,
+         ..found
+      })
+   }
+
+   /// `cell` inside a Mana `Clickable` labeled `button.label`, which shows the
+   /// label as its tooltip above the button.
+   fn tooltipped(cell: RawDiv, button: &Button, found: &clickable::Clickable) -> RawAnyElement {
+      type NewFn =
+         unsafe extern "C" fn(*mut u8, *const u8, usize, *mut gpui::SharedString) -> *mut u8;
+      type IntoAnyFn = unsafe extern "C" fn(*mut RawAnyElement, *mut u8) -> *mut RawAnyElement;
+      let mut inner = std::mem::MaybeUninit::<RawAnyElement>::uninit();
+      write_any(cell, inner.as_mut_ptr());
+      let id = gpui::intern_str(&format!("sunbird-composer-{}", button.id));
+      let mut label = gpui::SharedString::from_str(&button.label);
+      let mut built = gpui::Scratch::<CLICKABLE_CAP>::zeroed();
+      let mut out = std::mem::MaybeUninit::<RawAnyElement>::uninit();
+      // SAFETY: `found` was located and checked at install: `new` builds a
+      // `found.size`-byte `Clickable`, which `built` holds, taking the label;
+      // its `Div`, as large as ours, sits in it at `found.inner`, the
+      // placement byte at `found.tooltip`; and `into_any` consumes it.
+      unsafe {
+         let mut inner = inner.assume_init();
+         let new = std::mem::transmute::<usize, NewFn>(found.new);
+         let into_any = std::mem::transmute::<usize, IntoAnyFn>(found.into_any);
+         new(built.as_mut_ptr(), id.as_ptr(), id.len(), &raw mut label);
+         // The inner `Div` need not sit aligned, so it moves out and back.
+         let at = built.as_mut_ptr().add(found.inner);
+         let mut div = RawDiv::zeroed();
+         ptr::copy_nonoverlapping(at, div.as_mut_ptr(), found.inner_size);
+         push_any(&mut div, &mut inner);
+         ptr::copy_nonoverlapping(div.as_mut_ptr(), at, found.inner_size);
+         built.put(found.tooltip, TOOLTIP_ABOVE);
+         into_any(out.as_mut_ptr(), built.as_mut_ptr());
+         out.assume_init()
+      }
+   }
    /// A button drawn like the chat bar's own: its icon in Discord's
    /// interactive icon color, or the plugin's tint while it has one.
    fn icon_button(button: &Button) -> Option<RawDiv> {
