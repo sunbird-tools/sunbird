@@ -110,13 +110,23 @@ pub fn settings_visibility(ix: &Index<'_>) -> Found<Vec<VisibilityGuard>> {
       })
    };
    // A compare with 15 among the first instructions rejects nearly every function cheaply.
-   let found = ix
-      .heads(OPENS, |head| {
+   let candidates = if ix.isa == Isa::Aarch64 {
+      // `cmp wN/xN, #15` (shift=0, imm12=15, rd=31).
+      ix.heads_arm64_words(OPENS, |words| {
+         words
+            .iter()
+            .skip(1)
+            .any(|&word| word & 0x7FFF_FC1F == 0x7100_3C1F)
+      })
+   } else {
+      ix.heads(OPENS, |head| {
          head
             .iter()
             .skip(1)
             .any(|step| matches!(step.op, Op::Cmp { value: 15, .. }))
       })
+   };
+   let found = candidates
       .into_iter()
       .filter_map(|func| guard(&func.head(HEAD)))
       .collect::<Vec<_>>();
