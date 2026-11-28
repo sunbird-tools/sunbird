@@ -509,11 +509,17 @@ unsafe extern "C" fn build_context_menu_detour(
    let out = unsafe { orig_build(sret, input, a2, a3, s0, s1, s2, s3) };
 
    if !sret.is_null()
-      && let Some(item) = double_click::take_press(message_id)
+      && let Some(press) = double_click::take_press(message_id)
+      && std::panic::catch_unwind(|| press_item(syms, sret, &press.item, press.window, press.app))
+         .unwrap_or(false)
    {
-      let _ = std::panic::catch_unwind(|| {
-         press_item(syms, sret, &item, a3 as *mut c_void, s2 as *mut c_void);
-      });
+      double_click::pressed(message_id);
+      return out;
+   }
+   if !sret.is_null() && double_click::hidden(message_id) {
+      // SAFETY: `sret` is the builder's `Vec<MenuItem>`; see `press_item`.
+      unsafe { (*sret).len = 0 };
+      return out;
    }
 
    #[cfg(windows)]
@@ -1139,16 +1145,18 @@ mod arm64 {
       // SAFETY: forwards every register to the original builder.
       let mut out = unsafe { orig(input, a1, a2, a3, a4, a5, a6, a7, f0, f1, f2, f3) };
       if let (Some((message, channel)), Some(syms)) = (ids, MENU_SYMS.get()) {
-         if let Some(item) = crate::double_click::take_press(message) {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-               super::press_item(
-                  syms,
-                  &raw mut out,
-                  &item,
-                  a2 as *mut c_void,
-                  a5 as *mut c_void,
-               );
-            }));
+         if let Some(press) = crate::double_click::take_press(message)
+            && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+               super::press_item(syms, &raw mut out, &press.item, press.window, press.app)
+            }))
+            .unwrap_or(false)
+         {
+            crate::double_click::pressed(message);
+            return out;
+         }
+         if crate::double_click::hidden(message) {
+            out.len = 0;
+            return out;
          }
          if active {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1179,19 +1187,19 @@ fn inline_id_offset(syms: &MenuSymbols) -> Option<usize> {
 }
 
 /// Runs the click handler of the item with id `id` in the menu `vec`, with
-/// the builder's window and app. Pressing an item inside the builder leaves
-/// the menu unshown, the same as a click on it.
+/// the click's window and app, and empties the menu so it never shows.
+/// Whether it pressed.
 fn press_item(
    syms: &MenuSymbols,
    vec: *mut RawMenuVec,
    id: &str,
    window: *mut c_void,
    app: *mut c_void,
-) {
+) -> bool {
    type CallFn = unsafe extern "C" fn(*const u8, *const u8, *mut c_void, *mut c_void);
 
    let (Some(id_at), Ok(len)) = (syms.id_offset, u8::try_from(id.len())) else {
-      return;
+      return false;
    };
    let at = &syms.layout;
    // SAFETY: `vec` is the `Vec<MenuItem>` the builder just returned, items
@@ -1202,7 +1210,7 @@ fn press_item(
          && item.get(id_at + 1..id_at + 1 + id.len()) == Some(id.as_bytes())
    }) else {
       log::warn!("double click: the menu has no {id:?}");
-      return;
+      return false;
    };
    let word = |offset: usize| {
       item.get(offset..offset + 8).map_or(0, |bytes| {
@@ -1211,7 +1219,7 @@ fn press_item(
    };
    let (rc, vtbl) = (word(at.on_click), word(at.on_click + 8) as *const RcFnVtbl);
    if word(0) as u64 != at.action_tag || word(at.on_click_tag) != 0 || rc == 0 || vtbl.is_null() {
-      return;
+      return false;
    }
    // The handler takes the app behind one more pointer than the builder gets
    // it, and no event. Passing the builder's app directly segfaults.
@@ -1224,4 +1232,12 @@ fn press_item(
       let call = std::mem::transmute::<*const c_void, CallFn>((*vtbl).call);
       call(value, ptr::null(), window, (&raw mut app).cast());
    }
+   // Discord already draws the menu it is building, so a press alone left it
+   // open for a moment. An empty menu draws nothing.
+   // ponytail: leaks the items (their handlers and labels), a few hundred
+   // bytes per double click; drop them through Discord's `Vec<MenuItem>` drop
+   // if that ever matters.
+   // SAFETY: `vec` is the builder's `Vec<MenuItem>`, whose items stay allocated.
+   unsafe { (*vec).len = 0 };
+   true
 }

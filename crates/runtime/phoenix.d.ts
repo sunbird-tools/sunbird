@@ -1218,6 +1218,12 @@ declare namespace Phoenix {
     ): Remover;
     /// The signed-in user from the app's cache, or null before the first login has synced.
     me(): Promise<CurrentUser | null>;
+    /// Runs one of the client's own named commands with `args`, against its live stores, and
+    /// resolves to the command's result: `command("list_guilds")`, `command("get_pending_reply",
+    /// { channel_id })`. Names and argument names are libdiscord's (`"hello"` lists them). Desktop
+    /// only; elsewhere, and for commands that wait on the network, it rejects with why. Many
+    /// commands act as the account (send, delete, ban), so treat it like `post`.
+    command<T = unknown>(name: string, args?: Record<string, unknown>): Promise<T>;
     request(path: string, init?: FetchInit): Promise<FetchResponse>;
     get(path: string, init?: FetchInit): Promise<FetchResponse>;
     delete(path: string, init?: FetchInit): Promise<FetchResponse>;
@@ -1531,8 +1537,9 @@ declare namespace Phoenix {
     /// member list button (where Discord shows one), with `label` as its tooltip and `icon` mapped
     /// to Mana's icon of that name (`res://ic_mana_panel_open` is `PanelOpen`); `tint` is ignored.
     addHeaderButton(options: ButtonOptions): ButtonRemover;
-    /// In the message box, left of the emoji button. On Desktop Phoenix, a button labeled `label`
-    /// left of the chat bar, drawn as the primary button while `tint` is set; `icon` is ignored.
+    /// In the message box, left of the emoji button. On Desktop Phoenix too when `icon` is SVG
+    /// source, drawn in the bar's icon color, or in `tint` while it is set; a `res://` icon shows
+    /// `label` instead.
     addComposerButton(options: ButtonOptions): ButtonRemover;
     /// Windows. Whether the current Phoenix build has a native plugin button slot here.
     hasSurface?(surface: UiSurface): boolean;

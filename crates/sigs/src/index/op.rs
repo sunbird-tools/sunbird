@@ -315,6 +315,9 @@ fn x86(image: &Image<'_>, code: &[u8], ip: usize, limit: usize) -> Vec<Step> {
    let mut instruction = Instruction::default();
    let mut info = InstructionInfoFactory::new();
    let mut steps = Vec::new();
+   // The immediate the previous instruction pushed: `push 1; pop rsi` is how
+   // ELF builds load small constants.
+   let mut pushed = None;
    while steps.len() < limit && decoder.can_decode() {
       decoder.decode_out(&mut instruction);
       if instruction.is_invalid() {
@@ -506,6 +509,12 @@ fn x86(image: &Image<'_>, code: &[u8], ip: usize, limit: usize) -> Vec<Step> {
          {
             gpr(instruction.op0_register()).map_or(Op::Other, |reg| Op::Imm { reg, value: 0 })
          },
+         (_, Mnemonic::Pop) if instruction.op0_kind() == OpKind::Register => {
+            match (gpr(instruction.op0_register()), pushed) {
+               (Some(reg), Some(value)) => Op::Imm { reg, value },
+               _ => Op::Other,
+            }
+         },
          _ => {
             rip_target.map_or(Op::Other, |target| {
                Op::Global {
@@ -543,6 +552,12 @@ fn x86(image: &Image<'_>, code: &[u8], ip: usize, limit: usize) -> Vec<Step> {
          Mnemonic::Add if moves_sp => Some((SP, instruction.immediate(1).cast_signed() as isize)),
          _ => None,
       };
+      pushed = (instruction.mnemonic() == Mnemonic::Push
+         && matches!(
+            instruction.op0_kind(),
+            OpKind::Immediate8to64 | OpKind::Immediate32to64
+         ))
+      .then(|| instruction.immediate(0));
       steps.push(Step {
          at,
          len: instruction.len() as u8,

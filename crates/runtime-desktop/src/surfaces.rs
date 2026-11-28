@@ -92,6 +92,10 @@ pub fn set_div_id(address: usize) {
    let _ = DIV_ID.set(address);
 }
 
+pub fn div_id_hooked() -> bool {
+   ORIGINAL.get().is_some()
+}
+
 pub fn install(image: &Image<'static>, ix: &Index<'_>) {
    let (Some(address), Some(layout)) = (gpui::button_new_addr(), gpui::layout()) else {
       return;
@@ -224,6 +228,8 @@ unsafe extern "C" fn with_id(
    let original = *ORIGINAL.wait();
    // SAFETY: the detour forwards the original Div::id arguments.
    let result = unsafe { original(out, div, id, len) };
+   // SAFETY: result is the native Div and id is the original Div::id string.
+   unsafe { crate::composer::buttons::append_at_anchor(result, id, len) };
    let surface = SLOTS.get().and_then(|slots| {
       slots.iter().find_map(|&(surface, address, size)| {
          (id.addr() == address && len == size).then_some(surface)

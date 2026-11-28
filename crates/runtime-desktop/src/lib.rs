@@ -11,6 +11,7 @@
 mod accessories;
 mod badges;
 mod call_idle;
+mod client_commands;
 mod commands;
 mod composer;
 mod config;
@@ -249,6 +250,8 @@ pub fn prepare() -> Result<(), Error> {
    #[cfg(windows)]
    feature("plugin_ui_surfaces", || surfaces::install(&image, &ix));
    feature("context_menu", || context_menu::install(&image, &ix));
+   feature("double_click", || double_click::pane::install(&ix));
+   feature("client_commands", || client_commands::install(&image, &ix));
    // Before accessories hooks `MessageRow::render`, whose prologue the header
    // locators check.
    let header = X86_CODE.then(|| headers::locate(&image, &ix));
@@ -496,6 +499,25 @@ impl Platform for Desktop {
       discord::authorize(request)
    }
 
+   fn command(&self, name: &str, request: &str) -> Result<String, DiscordError> {
+      client_commands::run(request).map_err(|err| {
+         match err {
+            client_commands::Error::Unavailable => DiscordError::NoCommands,
+            client_commands::Error::Pending => {
+               DiscordError::CommandPending {
+                  name: name.to_owned(),
+               }
+            },
+            client_commands::Error::Reply => {
+               DiscordError::Command {
+                  name:    name.to_owned(),
+                  message: "the reply is not UTF-8".to_owned(),
+               }
+            },
+         }
+      })
+   }
+
    fn init(&self, ctx: &Ctx<'_>) -> rquickjs::Result<()> {
       ctx.store_userdata(js::Desktop::default())
          .map_err(|err| rquickjs::Exception::throw_internal(ctx, &err.to_string()))?;
@@ -646,6 +668,9 @@ impl Platform for Desktop {
                modal_rendered: modal::rendered(),
             }))
          },
+         // A libdiscord command (`{"type": name, ...args}`) and its JSON reply,
+         // for developing plugins. Like `/eval`, it acts as the account.
+         ("POST", "/commands") => Some(command_route(&request.body)),
          ("GET", "/themes/tokens") => {
             let names = remote::query_param(&request.query, "names").and_then(|raw| {
                let list: Vec<String> = raw
@@ -725,12 +750,12 @@ impl Platform for Desktop {
 
    fn routes(&self) -> &'static str {
       if cfg!(all(target_os = "macos", debug_assertions)) {
-         ", GET /ui, POST /ui/devtools, POST /ui/{choose,sheet}, GET /health, GET /themes/tokens, \
-          POST /themes/reload, GET /themes/quick-css, POST /themes/quick-css, GET /ui/screen, \
-          POST /ui/input"
+         ", GET /ui, POST /ui/devtools, POST /ui/{choose,sheet}, GET /health, POST /commands, GET \
+          /themes/tokens, POST /themes/reload, GET /themes/quick-css, POST /themes/quick-css, GET \
+          /ui/screen, POST /ui/input"
       } else {
-         ", GET /ui, POST /ui/devtools, POST /ui/{choose,sheet}, GET /health, GET /themes/tokens, \
-          POST /themes/reload, GET /themes/quick-css, POST /themes/quick-css"
+         ", GET /ui, POST /ui/devtools, POST /ui/{choose,sheet}, GET /health, POST /commands, GET \
+          /themes/tokens, POST /themes/reload, GET /themes/quick-css, POST /themes/quick-css"
       }
    }
 }
@@ -969,4 +994,17 @@ fn update_macos_loader(
          failed_plugins.join("; ")
       )
    })
+}
+
+/// Runs the JSON command in `body` for the debug shell's `POST /commands`.
+fn command_route(body: &[u8]) -> remote::Reply {
+   match client_commands::run(&String::from_utf8_lossy(body)) {
+      Ok(reply) => {
+         serde_json::from_str::<serde_json::Value>(&reply).map_or_else(
+            |_| remote::err("502 Bad Gateway", "the command answered with invalid JSON"),
+            |reply| remote::ok_json(&reply),
+         )
+      },
+      Err(err) => remote::err("409 Conflict", &format!("{err:?}")),
+   }
 }

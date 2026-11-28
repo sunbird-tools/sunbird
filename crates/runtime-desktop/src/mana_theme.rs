@@ -104,7 +104,7 @@ static RADIUS_SCALE: AtomicU32 = AtomicU32::new(f32::NAN.to_bits());
 /// Lock-free cached `SunbirdPalette` RGBA words, refreshed once whenever
 /// `active_colors` changes so GPUI render passes never lock `STATE` or call
 /// `SemanticColors::get_mut`.
-static PALETTE_CACHE: [AtomicU32; 8] = {
+static PALETTE_CACHE: [AtomicU32; 9] = {
    let d = SunbirdPalette::DEFAULT.to_rgba_words();
    [
       AtomicU32::new(d[0]),
@@ -115,6 +115,7 @@ static PALETTE_CACHE: [AtomicU32; 8] = {
       AtomicU32::new(d[5]),
       AtomicU32::new(d[6]),
       AtomicU32::new(d[7]),
+      AtomicU32::new(d[8]),
    ]
 };
 
@@ -917,6 +918,8 @@ pub struct SunbirdPalette {
    pub accent:     Color,
    pub danger:     Color,
    pub positive:   Color,
+   /// Discord's own interactive icons, like the chat bar's.
+   pub icon:       Color,
 }
 
 impl SunbirdPalette {
@@ -929,9 +932,10 @@ impl SunbirdPalette {
       accent:     Color::rgb(0x58, 0x65, 0xF2),
       danger:     Color::rgb(0xFF, 0x7B, 0x72),
       positive:   Color::rgb(0x7E, 0xE7, 0x87),
+      icon:       Color::rgb(0xB5, 0xBA, 0xC1),
    };
 
-   const fn to_rgba_words(self) -> [u32; 8] {
+   const fn to_rgba_words(self) -> [u32; 9] {
       [
          self.bg_surface.to_rgba_u32(),
          self.bg_code.to_rgba_u32(),
@@ -941,6 +945,7 @@ impl SunbirdPalette {
          self.accent.to_rgba_u32(),
          self.danger.to_rgba_u32(),
          self.positive.to_rgba_u32(),
+         self.icon.to_rgba_u32(),
       ]
    }
 }
@@ -981,6 +986,7 @@ pub fn sunbird_palette() -> SunbirdPalette {
       accent:     Color::from_rgba_u32(PALETTE_CACHE[5].load(Ordering::Relaxed)),
       danger:     Color::from_rgba_u32(PALETTE_CACHE[6].load(Ordering::Relaxed)),
       positive:   Color::from_rgba_u32(PALETTE_CACHE[7].load(Ordering::Relaxed)),
+      icon:       Color::from_rgba_u32(PALETTE_CACHE[8].load(Ordering::Relaxed)),
    }
 }
 
@@ -1022,6 +1028,10 @@ fn refresh_palette_cache(hooks: &Hooks, colors: &AlignedBuf) {
       positive:   pick(
          &["text-feedback-positive", "status-positive"],
          fallback.positive,
+      ),
+      icon:       pick(
+         &["interactive-icon-default", "interactive-normal"],
+         fallback.icon,
       ),
    });
 }

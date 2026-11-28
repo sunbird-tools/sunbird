@@ -392,6 +392,12 @@ unsafe extern "C" fn render_row_detour(
    let Some(orig) = ORIG_RENDER_ROW.get().copied() else {
       return sret;
    };
+   if !row.is_null() {
+      let offset = MSG_ID_OFFSET.load(Ordering::Relaxed);
+      // SAFETY: `row` is Discord's live `&MessageRow`, see below.
+      let message_id = unsafe { row.cast::<u8>().add(offset).cast::<u64>().read_unaligned() };
+      double_click::pane::note(message_id, &[a2]);
+   }
    // SAFETY: forwards all arguments verbatim to the original
    // `MessageRow::render`.
    let out = unsafe { orig(sret, row, a2, a3, s0, s1, s2, s3, s4, s5, s6) };
@@ -761,6 +767,11 @@ mod arm64 {
          unsafe { message_id(row) }
       };
       let valid = (1 << 32..1 << 63).contains(&id);
+      if valid {
+         // `x1` is the frame pointer x86 passes third; the next two are tried
+         // too since this ABI is untested.
+         crate::double_click::pane::note(id, &[a1, a2, a3]);
+      }
       let prev = RENDERING.with(|slot| slot.replace(if valid { id } else { 0 }));
       crate::headers::arm64::clear_last_name_node();
       // SAFETY: forwards every register and the stack words to the render.

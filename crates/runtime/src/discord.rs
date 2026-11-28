@@ -61,6 +61,40 @@ pub enum DiscordError {
    Declined,
    #[error("phoenix has not started")]
    NotStarted,
+   #[error("this client has no command layer, or no account has signed in yet")]
+   NoCommands,
+   #[error("{name} waits on Discord's async runtime, which plugins cannot run yet")]
+   CommandPending { name: String },
+   #[error("{name}: {message}")]
+   Command { name: String, message: String },
+}
+
+/// libdiscord's named command `name` with `args` (a JSON object), through
+/// the client's own command runner. Returns the command's `ok` value as JSON.
+pub fn command(name: &str, args: &str) -> Result<String, DiscordError> {
+   #[derive(serde::Deserialize)]
+   #[serde(untagged)]
+   enum Reply {
+      Ok { ok: serde_json::Value },
+      Err { error: String },
+   }
+   let failed = |message: String| {
+      DiscordError::Command {
+         name: name.to_owned(),
+         message,
+      }
+   };
+   let mut request = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(args)
+      .map_err(|err| failed(format!("arguments are not a JSON object: {err}")))?;
+   request.insert("type".to_owned(), name.into());
+   let reply = crate::platform()
+      .ok_or(DiscordError::NotStarted)?
+      .command(name, &serde_json::Value::Object(request).to_string())?;
+   match serde_json::from_str::<Reply>(&reply) {
+      Ok(Reply::Ok { ok }) => Ok(ok.to_string()),
+      Ok(Reply::Err { error }) => Err(failed(error)),
+      Err(_) => Err(failed("the reply has neither ok nor error".to_owned())),
+   }
 }
 
 /// Rust-side filter for `phoenix.discord.onRequest` and `onResponse` so
