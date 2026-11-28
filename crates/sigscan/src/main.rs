@@ -8,7 +8,8 @@
 //! - `strings <text>`: where `text` sits, the code that loads it, and the
 //!   function around each load.
 //! - `scan <pattern>`: where a byte pattern like `48 8D ?? 05` matches in code.
-//! - `refs <addr>`: the code and pointers that reference `addr`.
+//! - `refs <addr> [end]`: the code and pointers that reference `addr`, or any
+//!   of `addr..end`.
 //! - `check`: runs every locator the runtime uses on this file's platform and
 //!   exits 1 if any misses, so a new Discord build can be vetted before
 //!   shipping against it.
@@ -60,8 +61,8 @@ use phoenix_sigs::{
 };
 
 const USAGE: &str = "usage: sigscan <library.so | Discord.exe | Discord | PhoenixFatClient | \
-                     main.jsbundle> [check | strings <text> | refs <addr> | dis <addr> [count] | \
-                     explain <addr> | ops <addr> [count] | source <path suffix>]";
+                     main.jsbundle> [check | strings <text> | refs <addr> [end] | dis <addr> \
+                     [count] | explain <addr> | ops <addr> [count] | source <path suffix>]";
 
 fn main() -> misstep::Result<()> {
    misstep::install_panic_hook();
@@ -145,7 +146,7 @@ fn main() -> misstep::Result<()> {
       Some("strings") => tools.strings(args.get(2).context(USAGE)?),
       Some("scan") => tools.scan(&args[2..].join(" ")),
       Some("refs") => {
-         tools.refs(addr(2)?);
+         tools.refs(addr(2)?, args.get(3).map(|_| addr(3)).transpose()?);
          Ok(())
       },
       Some("dis") => {
@@ -928,15 +929,16 @@ impl Tools<'_> {
       }
    }
 
-   fn refs(&self, target: usize) {
+   fn refs(&self, target: usize, end: Option<usize>) {
+      let end = end.unwrap_or(target + 1);
       if self.arm64 {
-         self.print_arm64_refs(target..target + 1);
+         self.print_arm64_refs(target..end);
          for pointer in self.image.pointers_to(target).into_iter().take(64) {
             println!("   pointer at {}", self.at(pointer));
          }
          return;
       }
-      let code = x86::code_refs(self.image, target..target + 1);
+      let code = x86::code_refs(self.image, target..end);
       let pointers = self.image.pointers_to(target);
       println!(
          "{}: {} code refs, {} pointers",
