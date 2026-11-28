@@ -447,6 +447,22 @@ pub fn release_ref_index() {
       .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
+/// Seeds the arm64 reference index with a pre-sorted `(target_rva << 32) | site_rva`
+/// table built by `phoenix_sigs::index::Index`, avoiding a second full scan of `__text`.
+pub fn seed_ref_index(image: &Image<'_>, refs: Vec<u64>) {
+   let Some((base, exec_bytes, _)) = exec_summary(image) else {
+      return;
+   };
+   let mut guard = REF_INDEX
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+   *guard = Some(RefIndex {
+      base,
+      exec_bytes,
+      refs,
+   });
+}
+
 struct RefIndex {
    base:       usize,
    exec_bytes: usize,
@@ -540,15 +556,28 @@ fn scan_chunk_refs(
          let (at, page) = pages[usize::from(rn)];
          (at != usize::MAX && index - at <= PAIR_REACH).then(|| page.wrapping_add(imm))
       };
-      let target = match decode(word, pc) {
-         Insn::Adrp { rd, page } => {
-            pages[usize::from(rd)] = (index, page);
-            None
-         },
-         Insn::AddImm { rn, imm, .. } => paired(rn, imm),
-         Insn::Load { rn, offset, .. } | Insn::Store { rn, offset, .. } => paired(rn, offset),
-         Insn::Bl { target } | Insn::B { target } => Some(target),
-         _ => None,
+      // Fast raw-word filter: only ~20% of instructions are adrp/add/ldr/str/b/bl.
+      let target = if word & 0x9F00_0000 == 0x9000_0000 {
+         let rd = (word & 0x1F) as Reg;
+         let immlo = (word >> 29) & 3;
+         let immhi = (word >> 5) & 0x7_FFFF;
+         let imm = sign_extend((immhi << 2) | immlo, 21) << 12;
+         pages[usize::from(rd)] = (index, (pc & !0xFFF).wrapping_add_signed(imm));
+         None
+      } else if word & 0x7F80_0000 == 0x1100_0000 {
+         let rn = ((word >> 5) & 0x1F) as Reg;
+         let shift = (word >> 22) & 1;
+         let imm = (((word >> 10) & 0xFFF) as usize) << (12 * shift);
+         paired(rn, imm)
+      } else if word & 0x3F00_0000 == 0x3900_0000 && ((word >> 22) & 3) <= 1 {
+         let rn = ((word >> 5) & 0x1F) as Reg;
+         let size = 1usize << (word >> 30);
+         let offset = ((word >> 10) & 0xFFF) as usize * size;
+         paired(rn, offset)
+      } else if word & 0x7C00_0000 == 0x1400_0000 {
+         Some(rel(pc, word & 0x03FF_FFFF, 26))
+      } else {
+         None
       };
       if index >= from
          && let Some(target) = target
