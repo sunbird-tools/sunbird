@@ -1331,6 +1331,9 @@ unsafe extern "C" fn modal_button_callback(
 // Public API
 // ---------------------------------------------------------------------------
 
+/// `Div::id`'s address, for hooks on the ids Discord gives its own divs.
+pub static DIV_ID: AtomicUsize = AtomicUsize::new(0);
+
 /// Opens a native GPUI modal for `phoenix.ui.openPage` and triggers a GPUI
 /// redraw immediately.
 pub fn open_page(spec: PageModalSpec) -> u64 {
@@ -1731,6 +1734,7 @@ pub fn install(image: &Image<'static>) {
       let modal_into_any = sret_wrap(found.modal_into_any)?;
       let modal_child_div = sret_wrap(found.modal_child_div)?;
       let modal_footer_button = sret_wrap(found.modal_footer_button)?;
+      DIV_ID.store(found.div_id, Ordering::Release);
       let div_id = sret_wrap(found.div_id)?;
       // SAFETY: resolved and layout-verified against Discord.
       Ok(unsafe {

@@ -1355,7 +1355,8 @@ fn add_composer_button<'js>(
    static NEXT_BUTTON: AtomicU64 = AtomicU64::new(1);
 
    let label = options.get::<_, String>("label")?;
-   let on = options.get::<_, Option<u32>>("tint")?.is_some();
+   let tint = options.get::<_, Option<u32>>("tint")?;
+   let icon = composer_icon(options.get::<_, Option<String>>("icon")?);
    let on_press = options.get::<_, Function<'js>>("onPress")?;
    let Some(registry) = ctx.userdata::<Desktop<'js>>() else {
       return noop_handle(ctx);
@@ -1366,8 +1367,13 @@ fn add_composer_button<'js>(
       .borrow_mut()
       .push((id, plugin.to_owned(), on_press));
    drop(registry);
-   let state = Rc::new(RefCell::new((label.clone(), on)));
-   buttons::set(Button { id, label, on });
+   let state = Rc::new(RefCell::new((label.clone(), tint, icon)));
+   buttons::set(Button {
+      id,
+      label,
+      tint,
+      icon,
+   });
 
    let remove = Function::new(ctx.clone(), move |ctx: Ctx<'js>| {
       let Some(registry) = ctx.userdata::<Desktop<'js>>() else {
@@ -1389,18 +1395,30 @@ fn add_composer_button<'js>(
                state.0 = label;
             }
             if patch.contains_key("tint")? {
-               state.1 = patch.get::<_, Option<u32>>("tint")?.is_some();
+               state.1 = patch.get::<_, Option<u32>>("tint")?;
+            }
+            if let Some(icon) = patch.get::<_, Option<String>>("icon")? {
+               state.2 = composer_icon(Some(icon));
             }
             buttons::set(Button {
                id,
                label: state.0.clone(),
-               on: state.1,
+               tint: state.1,
+               icon: state.2,
             });
             Ok(())
          },
       )?,
    )?;
    Ok(remove)
+}
+
+/// A composer button's icon when it is SVG source, which Desktop draws. A
+/// `res://` Mana icon has no SVG to draw, so the button shows its label.
+fn composer_icon(icon: Option<String>) -> Option<&'static str> {
+   icon
+      .filter(|icon| icon.contains("<svg"))
+      .and_then(|svg| crate::icons::register(&svg))
 }
 
 /// Drops the composer buttons `plugin` added.

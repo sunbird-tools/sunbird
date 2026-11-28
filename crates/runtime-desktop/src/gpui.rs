@@ -231,6 +231,12 @@ pub fn gpui_px(px: f32) -> u64 {
    u64::from(px.to_bits()) << 32
 }
 
+/// Encodes `Some(AbsoluteLength::Rems(rems))`, which follows the window's rem
+/// size and so Discord's zoom, as its own chat bar icons do.
+pub fn gpui_rems(rems: f32) -> u64 {
+   (u64::from(rems.to_bits()) << 32) | 1
+}
+
 /// Encodes `Some(Length::Definite(DefiniteLength::Fraction(f)))`, a share of
 /// the parent like [`W_FULL`].
 pub fn fraction(f: f32) -> u64 {
@@ -1048,7 +1054,7 @@ impl Builder {
          s.lengths(&s.at.corner_radii, gpui_px(4.0));
       });
       if let (Some(svgs), Some(path)) = (SVG.get(), crate::icons::register(svg)) {
-         let mut icon = svg_icon(self, svgs, path, 18.0, color);
+         let mut icon = svg_icon(self, svgs, path, gpui_px(18.0), color);
          self.push_any(&mut button, &mut icon);
       } else {
          button = self.push_div(button, self.text_line(fallback, color, 16.0)?);
@@ -1246,6 +1252,20 @@ pub fn push_raw_button(mut parent: RawDiv, mut btn: RawButton) -> RawDiv {
    // SAFETY: appends native Mana `Button` directly into `parent`.
    unsafe { (sym.div_child_button)(&raw mut out, &raw mut parent, &raw mut btn) };
    out
+}
+
+/// `div` laid out as a flex row.
+pub fn flex(div: RawDiv) -> Option<RawDiv> {
+   Some(chain(SYMBOLS.get()?.div_flex, div))
+}
+
+/// An SVG registered at `path`, `size` square (a [`gpui_px`] or
+/// [`gpui_rems`] length) in `color`, or `None` where SVGs cannot be drawn.
+pub fn svg_any(path: &'static str, size: u64, color: [f32; 4]) -> Option<RawAnyElement> {
+   let builder = Builder {
+      sym: SYMBOLS.get()?,
+   };
+   Some(svg_icon(&builder, SVG.get()?, path, size, color))
 }
 
 /// Mana's `TextBlock`: `title` in its heading weight over `subtitle`.
@@ -1517,7 +1537,7 @@ fn svg_icon(
    b: &Builder,
    svg: &SvgSymbols,
    path: &'static str,
-   px: f32,
+   size: u64,
    color: [f32; 4],
 ) -> RawAnyElement {
    let mut fresh = RawSvg::zeroed();
@@ -1541,7 +1561,7 @@ fn svg_icon(
          ptr: style,
          at:  &b.sym.layout.style,
       };
-      s.lengths(&s.at.size, gpui_px(px));
+      s.lengths(&s.at.size, size);
       s.float(s.at.flex_shrink, 0.0);
       s.hsla(s.at.text_color, color);
    }
@@ -1566,7 +1586,7 @@ fn inline_row(b: &Builder, pieces: &[Piece], font_px: f32) -> RawDiv {
                b,
                svg,
                path,
-               font_px + 3.0,
+               gpui_px(font_px + 3.0),
                color.map_or(hsla, argb_to_hsla),
             );
             b.push_any(&mut icons, &mut icon);
