@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 
+# No doctests, and rustdoc's build ignores the release profile's
+# `debug-assertions = false` that `phoenix-ui-desktop` was built with, so the
+# macOS debug shell's `input` import fails there.
+[lib]
+doctest = false
+
 [target.'cfg(any(windows, target_os = "macos", all(target_os = "linux", target_arch = "x86_64")))'.dependencies]
 crc32fast          = { workspace = true }
 flub               = { workspace = true }
